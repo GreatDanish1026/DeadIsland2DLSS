@@ -185,3 +185,14 @@ presets K/K/M/L. UE rounds the render size UP (ceil(3840/1.7241) = 2228, game's 
 **DLAA at ratio exactly 1.0: the game stops running FSR 2 altogether** (no FSR 2 passes; overlay
 "waiting for FSR 2"; changing the in-game quality didn't help). 0.2.1 (installed, untested): DLAA
 uses ratio 1.0001 (ceil gives 3840x2160 still, but it counts as upscaling).
+
+## 0.2.1 test and 0.2.2 (2026-11-20)
+
+0.2.1 (ratio 1.0001): DLAA still no FSR 2. Disassembly (dumpbin /disasm on the exe): the plugin's
+view extension at exe 0xd53bd0 takes the game's quality cvar clamped to 1..4, calls the ratio
+function (0xd53caa) and gives UE a screen percentage driver with fraction 1/ratio (0xd53cdf);
+0xd520a0 / 0xd520d0 are the upscaler's max (mode 1) and min (mode 4) fractions; 0xd492d0 the
+fraction for a quality mode. With 1/1.0001 UE's ceil still gives 3840x2160 = the output, and UE
+then takes its plain path without the temporal upscaler. 0.2.2 (installed, untested): DLAA ratio =
+H / (H - 1.05) from the back buffer height (re-applied at present when it changes; 1.0005 before
+the first present), i.e. 3839x2159 at 4K: one pixel short, so UE upscales and FSR 2 (DLSS) runs.

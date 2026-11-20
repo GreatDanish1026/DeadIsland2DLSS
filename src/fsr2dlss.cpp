@@ -77,11 +77,13 @@ const uint32_t kKnownIds[6] = {0x07e74148, 0x78b5ccfe, 0x240d257d, 0x089f5b7b, 0
 enum DlssMode { kModeGame, kModeDlaa, kModeQuality, kModeBalanced, kModePerformance, kModeUltraPerformance, kDlssModeCount };
 const char* const kDlssModeNames[kDlssModeCount] = {"Game's FSR 2 setting", "DLAA (native, 100%)", "Quality (67%)",
                                                     "Balanced (58%)", "Performance (50%)", "Ultra Performance (33%)"};
-// DLAA: at exactly 1.0 the game stops running FSR 2 (0.2.0 test: no FSR 2 passes at all, presumably
-// UE/the plugin skip the temporal upscaler at 100%). UE rounds the render size up (Balanced 1.7241 gave
-// 2228x1253 = ceil(3840/1.7241) x ceil(2160/1.7241)), so a ratio just above 1 still renders the full
-// display size while counting as upscaling.
-const float kDlssModeRatio[kDlssModeCount] = {0, 1.0001f, 1.5f, 1.0f / 0.58f, 2.0f, 3.0f};
+// DLAA: the plugin hands UE a screen percentage of 1/ratio (exe 0xd53cbc), UE rounds the render size
+// up (Balanced 1.7241 gave 2228x1253 = ceil(3840/1.7241) x ceil(2160/1.7241)), and when the render
+// size equals the output UE doesn't call the temporal upscaler at all: 1.0 (0.2.0) and 1.0001 (0.2.1,
+// still 3840x2160) both made FSR 2 stop. So DLAA renders one pixel short in each direction (3839x2159
+// at 4K, 99.95%): ratio = H / (H - 1.05) for display height H (DlaaRatio), the smaller dimension
+// deciding; then ceil(W / ratio) <= W - 1 too.
+const float kDlssModeRatio[kDlssModeCount] = {0, 0 /* DlaaRatio */, 1.5f, 1.0f / 0.58f, 2.0f, 3.0f};
 
 enum MotionUnits { kMotionUv, kMotionPixels, kMotionUnitsCount };
 const char* const kMotionUnitsNames[kMotionUnitsCount] = {"UV (scaled by render size)", "Render pixels"};
@@ -221,11 +223,22 @@ bool WriteCode(uint8_t* at, const uint8_t* bytes, size_t n) {
     return true;
 }
 
+std::atomic<uint32_t> g_screenH{0};  // back buffer height, from present (0 until the first one)
+
+float DlaaRatio() {
+    const uint32_t h = g_screenH.load();
+    // Before the first present (the add-on loads before the swapchain exists): 1.0005 renders one
+    // pixel short at 4K (3839x2159); corrected at the first present.
+    return h >= 200 ? static_cast<float>(h) / (static_cast<float>(h) - 1.05f) : 1.0005f;
+}
+
 // Applies g_set.mode: patches the ratio, or puts the game's code back.
 void ApplyMode() {
     if (!g_ratio.searched) FindRatioFunction();
     if (!g_ratio.code) return;
-    const float want = g_set.mode > kModeGame && g_set.mode < kDlssModeCount ? kDlssModeRatio[g_set.mode] : 0.0f;
+    const float want = g_set.mode == kModeDlaa ? DlaaRatio()
+                       : g_set.mode > kModeGame && g_set.mode < kDlssModeCount ? kDlssModeRatio[g_set.mode]
+                                                                               : 0.0f;
     if (want == 0) {
         if (g_ratio.patched && WriteCode(g_ratio.code, g_ratio.original, sizeof(g_ratio.original))) {
             g_ratio.patched = false;
@@ -585,8 +598,14 @@ void LogStats() {
     g_evaluated = g_kept = g_skippedPasses = 0;
 }
 
-void OnPresent(command_queue*, swapchain*, const rect*, const rect*, uint32_t, const rect*) {
+void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t, const rect*) {
     ++g_presents;
+    // DLAA's ratio depends on the screen height: re-applied when it changes.
+    const resource_desc bd = sc->get_device()->get_resource_desc(sc->get_current_back_buffer());
+    if (bd.texture.height != g_screenH.load()) {
+        g_screenH = bd.texture.height;
+        if (g_set.mode == kModeDlaa) ApplyMode();
+    }
     LogStats();
     dlss::EndFrame();
     HWND fg = GetForegroundWindow();
