@@ -196,3 +196,10 @@ fraction for a quality mode. With 1/1.0001 UE's ceil still gives 3840x2160 = the
 then takes its plain path without the temporal upscaler. 0.2.2 (installed, untested): DLAA ratio =
 H / (H - 1.05) from the back buffer height (re-applied at present when it changes; 1.0005 before
 the first present), i.e. 3839x2159 at 4K: one pixel short, so UE upscales and FSR 2 (DLSS) runs.
+
+## 0.2.2 test: DLAA WORKS (2026-11-20)
+
+User: "everything looked good". DLAA ratio 1.00049 (from the 2160 back buffer) -> FSR 2 render
+3839x2159 -> 3840x2160, DLSS took it (colour/motion textures 3840x2160), switches live to Quality
+and back. NGX had created it as "Quality mode" (dlss.cpp picked DLAA only at render >= output);
+0.2.3 (installed, not retested, only the NGX quality value changes): within 2 px counts as DLAA.

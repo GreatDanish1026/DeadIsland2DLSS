@@ -88,7 +88,9 @@ const char* QualityName(NVSDK_NGX_PerfQuality_Value q) {
 
 // The DLSS quality mode whose supported render size range holds the game's render size.
 NVSDK_NGX_PerfQuality_Value PickQuality(unsigned renderW, unsigned renderH, unsigned outW, unsigned outH) {
-    if (renderW >= outW && renderH >= outH) return NVSDK_NGX_PerfQuality_Value_DLAA;
+    // Dead Island 2's DLAA renders one pixel short (UE skips the upscaler at 100%): within 2 pixels
+    // of the output counts as DLAA.
+    if (renderW + 2 >= outW && renderH + 2 >= outH) return NVSDK_NGX_PerfQuality_Value_DLAA;
     // The modes' supported ranges overlap, so take the mode whose optimal width is closest to the
     // render width (first fit picked Quality at every scale).
     const NVSDK_NGX_PerfQuality_Value order[] = {

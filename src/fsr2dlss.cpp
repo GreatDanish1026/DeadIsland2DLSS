@@ -75,7 +75,7 @@ const uint32_t kKnownIds[6] = {0x07e74148, 0x78b5ccfe, 0x240d257d, 0x089f5b7b, 0
 // found in the exe by its code; see RatioPatch), so whichever FSR 2 quality the game asks for,
 // FSR 2 (and so DLSS) renders at this ratio. DLAA = ratio 1: native resolution.
 enum DlssMode { kModeGame, kModeDlaa, kModeQuality, kModeBalanced, kModePerformance, kModeUltraPerformance, kDlssModeCount };
-const char* const kDlssModeNames[kDlssModeCount] = {"Game's FSR 2 setting", "DLAA (native, 100%)", "Quality (67%)",
+const char* const kDlssModeNames[kDlssModeCount] = {"Game's FSR 2 setting", "DLAA (native)", "Quality (67%)",
                                                     "Balanced (58%)", "Performance (50%)", "Ultra Performance (33%)"};
 // DLAA: the plugin hands UE a screen percentage of 1/ratio (exe 0xd53cbc), UE rounds the render size
 // up (Balanced 1.7241 gave 2228x1253 = ceil(3840/1.7241) x ceil(2160/1.7241)), and when the render
