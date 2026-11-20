@@ -54,6 +54,13 @@ which ships the same AMD FSR 2 UE plugin).
   `renodx-dlssfix.addon64` (2026-11-05; purpose unknown, maybe for OptiScaler's DLSS output:
   rename to .off if it gets in the way), reshade-shaders.
 
+## ReShade loading (2026-11-20, first probe run)
+
+The first run wrote nothing (no ReShade.log, no DeadIsland2DLSS.log): the exe doesn't import
+dinput8.dll (imports include dxgi.dll, d3d11.dll, d3d9.dll; d3d12.dll delay-loaded), so ReShade
+as dinput8.dll was never loaded. With OptiScaler it had been loaded through OptiScaler's dxgi.dll.
+ReShade is now dxgi.dll (renamed, same file, 6.8.0.2152).
+
 ## Plan
 
 1. 0.0.1 probe (this): find FSR 2's passes (shader ids, cbFSR2 layout, dispatch sizes, inputs:
