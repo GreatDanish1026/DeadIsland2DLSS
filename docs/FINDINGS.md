@@ -155,3 +155,24 @@ exe. Own NGX project id. Not built: CallistoDLSS's upscaler.cpp, framegen.cpp, f
 hdrswap.cpp (reference for later steps); probe.cpp (build.ps1 $Probe = $true).
 
 Also in the game folder (not ours): PSOBoost.addon64 (2026-11-20 15:01, the PSOBoost project).
+
+## 0.1.0 test (2026-11-20): WORKS
+
+User: "everything looked good". Log: FSR 2 pass ids as in the capture; DLSS ran in Quality
+2560x1440, Balanced 2259x1271 (colour texture 2260x1272), Performance 1920x1080 -> 3840x2160,
+presets K/K/M, no "FSR 2 kept" diag lines. MotionUnits UV (x render size) and jitter as is are
+right. The user's NVIDIA app DLSS override is on (NGX loads 310.9.16 from ProgramData).
+
+## 0.2.0: DLSS modes incl. DLAA (2026-11-20, installed, untested)
+
+FSR 2.1's ffxFsr2GetUpscaleRatioFromQualityMode is statically linked at exe RVA 0xd438c0 (build
+25629748): `sub ecx,1/je` x3, `cmp ecx,1/je`, `xorps xmm0,xmm0/ret`, then `movss xmm0,[rip+x]/ret`
+loading 3.0, 2.0, 1.7, 1.5. Called from 0xd43856 (GetRenderResolutionFromQualityMode) and the
+plugin at 0xd492ea, 0xd520a9, 0xd520d9, 0xd53caa; no other code uses its 1.7 constant. The add-on
+finds it at run time by that code + the four constants and, for a DLSS mode, overwrites its start
+with `mov eax,<ratio>; movd xmm0,eax; ret` (DLAA 1.0, Quality 1.5, Balanced 1/0.58, Performance 2,
+Ultra Performance 3); "Game's FSR 2 setting" (DlssMode=0, default) restores the original bytes,
+also on unload. FSR 2's accumulate is now picked by order (sixth pass after the SPD pyramid) and
+display-sized dispatch, since at native resolution passes 1-4 are display-sized too.
+Unknown until tested: whether the plugin accepts ratio 1.0, and whether it notices a live change
+(it may only recreate its FSR 2 context when its quality mode changes).

@@ -70,12 +70,22 @@ const uint32_t kKnownIds[6] = {0x07e74148, 0x78b5ccfe, 0x240d257d, 0x089f5b7b, 0
 
 // ---------------------------------------------------------------- settings
 
+// DLSS mode: the render resolution. kModeGame leaves it to the game's FSR 2 quality setting; the
+// others override the ratio FSR 2.1 reports for every quality mode (ffxFsr2GetUpscaleRatioFromQualityMode,
+// found in the exe by its code; see RatioPatch), so whichever FSR 2 quality the game asks for,
+// FSR 2 (and so DLSS) renders at this ratio. DLAA = ratio 1: native resolution.
+enum DlssMode { kModeGame, kModeDlaa, kModeQuality, kModeBalanced, kModePerformance, kModeUltraPerformance, kDlssModeCount };
+const char* const kDlssModeNames[kDlssModeCount] = {"Game's FSR 2 setting", "DLAA (native, 100%)", "Quality (67%)",
+                                                    "Balanced (58%)", "Performance (50%)", "Ultra Performance (33%)"};
+const float kDlssModeRatio[kDlssModeCount] = {0, 1.0f, 1.5f, 1.0f / 0.58f, 2.0f, 3.0f};
+
 enum MotionUnits { kMotionUv, kMotionPixels, kMotionUnitsCount };
 const char* const kMotionUnitsNames[kMotionUnitsCount] = {"UV (scaled by render size)", "Render pixels"};
 
 struct Settings {
     bool enabled = true;
     int preset = dlss::kPresetAuto;  // DlssModel
+    int mode = kModeGame;            // DlssMode
     int motionUnits = kMotionUv;     // MotionUnits (test)
     bool flipJitter = false;         // FlipJitter (test)
     bool flipMotionX = false, flipMotionY = false;  // FlipMotionX/Y (test)
@@ -86,6 +96,8 @@ struct Settings {
 void LoadSettings() {
     reshade::get_config_value(nullptr, RD_PRODUCT, "Enabled", g_set.enabled);
     reshade::get_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
+    reshade::get_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
+    if (g_set.mode < 0 || g_set.mode >= kDlssModeCount) g_set.mode = kModeGame;
     reshade::get_config_value(nullptr, RD_PRODUCT, "MotionUnits", g_set.motionUnits);
     if (g_set.motionUnits < 0 || g_set.motionUnits >= kMotionUnitsCount) g_set.motionUnits = kMotionUv;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FlipJitter", g_set.flipJitter);
@@ -98,6 +110,7 @@ void LoadSettings() {
 void SaveSettings() {
     reshade::set_config_value(nullptr, RD_PRODUCT, "Enabled", g_set.enabled);
     reshade::set_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
+    reshade::set_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
     reshade::set_config_value(nullptr, RD_PRODUCT, "MotionUnits", g_set.motionUnits);
     reshade::set_config_value(nullptr, RD_PRODUCT, "FlipJitter", g_set.flipJitter);
     reshade::set_config_value(nullptr, RD_PRODUCT, "FlipMotionX", g_set.flipMotionX);
@@ -124,6 +137,110 @@ std::set<uint32_t> g_idsLogged;
 void Why(const std::string& why) {
     ++g_why[why];
     ++g_kept;
+}
+
+// ---------------------------------------------------------------- render resolution (ratio patch)
+//
+// FSR 2.1's ffxFsr2GetUpscaleRatioFromQualityMode, statically linked (RVA 0xd438c0 in build
+// 25629748; five call sites in the plugin, the only code using its constants):
+//   83 e9 01  74 xx   sub ecx,1 / je quality      83 e9 01  74 xx  sub ecx,1 / je balanced
+//   83 e9 01  74 xx   sub ecx,1 / je performance  83 f9 01  74 xx  cmp ecx,1 / je ultra performance
+//   0f 57 c0  c3      xorps xmm0,xmm0 / ret       then four "movss xmm0,[rip+x] / ret" (3.0, 2.0, 1.7, 1.5)
+// Found by that code and those four constants. A DLSS mode replaces its start with
+//   b8 <ratio>  66 0f 6e c0  c3   mov eax,<float bits> / movd xmm0,eax / ret
+// and "Game's" puts the original bytes back.
+
+struct RatioPatch {
+    uint8_t* code = nullptr;
+    uint8_t original[10] = {};
+    bool searched = false, patched = false;
+    float ratio = 0;  // patched ratio
+    std::string status = "not searched yet";
+} g_ratio;
+
+bool ReadFloatAt(const uint8_t* insn, float want) {  // insn = movss xmm0,[rip+disp32] (8 bytes)
+    int32_t disp;
+    memcpy(&disp, insn + 4, 4);
+    float v;
+    memcpy(&v, insn + 8 + disp, 4);
+    return v == want;
+}
+
+void FindRatioFunction() {
+    g_ratio.searched = true;
+    auto base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+    auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    auto sec = IMAGE_FIRST_SECTION(nt);
+    std::vector<uint8_t*> found;
+    for (unsigned s = 0; s < nt->FileHeader.NumberOfSections; ++s) {
+        if (!(sec[s].Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
+        uint8_t* p = base + sec[s].VirtualAddress;
+        const size_t n = sec[s].Misc.VirtualSize;
+        for (size_t i = 0; i + 60 < n; ++i) {
+            const uint8_t* c = p + i;
+            if (c[0] != 0x83 || c[1] != 0xe9 || c[2] != 0x01 || c[3] != 0x74 || c[5] != 0x83 || c[6] != 0xe9 || c[7] != 0x01 ||
+                c[8] != 0x74 || c[10] != 0x83 || c[11] != 0xe9 || c[12] != 0x01 || c[13] != 0x74 || c[15] != 0x83 ||
+                c[16] != 0xf9 || c[17] != 0x01 || c[18] != 0x74 || c[20] != 0x0f || c[21] != 0x57 || c[22] != 0xc0 || c[23] != 0xc3)
+                continue;
+            // The four jump targets: each a movss xmm0,[rip+x] / ret loading 1.5, 1.7, 2.0, 3.0.
+            const uint8_t* targets[4] = {c + 5 + static_cast<int8_t>(c[4]), c + 10 + static_cast<int8_t>(c[9]),
+                                         c + 15 + static_cast<int8_t>(c[14]), c + 20 + static_cast<int8_t>(c[19])};
+            const float want[4] = {1.5f, 1.7f, 2.0f, 3.0f};
+            bool ok = true;
+            for (int k = 0; k < 4 && ok; ++k) {
+                const uint8_t* t = targets[k];
+                ok = t > c && t < c + 60 && t[0] == 0xf3 && t[1] == 0x0f && t[2] == 0x10 && t[3] == 0x05 && t[8] == 0xc3 &&
+                     ReadFloatAt(t, want[k]);
+            }
+            if (ok) found.push_back(p + i);
+        }
+    }
+    if (found.size() != 1) {
+        g_ratio.status = found.empty() ? "FSR 2's upscale ratio function wasn't found in this game build"
+                                       : "FSR 2's upscale ratio function matched more than once: not patched";
+        Log("DLSS mode: %s (%zu matches)", g_ratio.status.c_str(), found.size());
+        return;
+    }
+    g_ratio.code = found[0];
+    memcpy(g_ratio.original, g_ratio.code, sizeof(g_ratio.original));
+    g_ratio.status = "ready";
+    Log("DLSS mode: FSR 2's upscale ratio function at exe+0x%llx", static_cast<unsigned long long>(g_ratio.code - base));
+}
+
+bool WriteCode(uint8_t* at, const uint8_t* bytes, size_t n) {
+    DWORD old = 0;
+    if (!VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &old)) return false;
+    memcpy(at, bytes, n);
+    VirtualProtect(at, n, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), at, n);
+    return true;
+}
+
+// Applies g_set.mode: patches the ratio, or puts the game's code back.
+void ApplyMode() {
+    if (!g_ratio.searched) FindRatioFunction();
+    if (!g_ratio.code) return;
+    const float want = g_set.mode > kModeGame && g_set.mode < kDlssModeCount ? kDlssModeRatio[g_set.mode] : 0.0f;
+    if (want == 0) {
+        if (g_ratio.patched && WriteCode(g_ratio.code, g_ratio.original, sizeof(g_ratio.original))) {
+            g_ratio.patched = false;
+            Log("DLSS mode: the game's FSR 2 quality setting decides the render resolution again");
+        }
+        return;
+    }
+    if (g_ratio.patched && g_ratio.ratio == want) return;
+    uint8_t code[10] = {0xb8, 0, 0, 0, 0, 0x66, 0x0f, 0x6e, 0xc0, 0xc3};
+    memcpy(code + 1, &want, 4);
+    if (!WriteCode(g_ratio.code, code, sizeof(code))) {
+        g_ratio.status = "couldn't patch FSR 2's upscale ratio";
+        Log("DLSS mode: %s (VirtualProtect failed)", g_ratio.status.c_str());
+        return;
+    }
+    g_ratio.patched = true;
+    g_ratio.ratio = want;
+    g_resetNext = true;
+    Log("DLSS mode %s: FSR 2's upscale ratio is now %.4f for every quality mode", kDlssModeNames[g_set.mode], want);
 }
 
 // ---------------------------------------------------------------- per command list bindings
@@ -409,8 +526,10 @@ bool OnDispatch(command_list* cl, uint32_t x, uint32_t y, uint32_t) {
     g_lastFsr2Present = g_presents.load();
     Chain& c = s->chain;
     const uint32_t* cb = s->cb;
-    // The accumulate covers the display size in 8x8 tiles; the other passes the render size.
-    const bool accumulate = x * 8 >= cb[2] && y * 8 >= cb[3] && x * 8 < cb[2] + 8 && y * 8 < cb[3] + 8 && !s->spdFresh;
+    // The accumulate covers the display size in 8x8 tiles, and comes sixth. At native resolution
+    // (DLAA) passes 1-4 cover the display size too, so the order decides once the pyramid was seen.
+    const bool displaySized = x * 8 >= cb[2] && y * 8 >= cb[3] && x * 8 < cb[2] + 8 && y * 8 < cb[3] + 8;
+    const bool accumulate = !s->spdFresh && displaySized && (c.next == 5 || c.next < 0);
     if (s->spdFresh) {
         c = Chain();
         c.next = 0;
@@ -492,8 +611,9 @@ void RestoreListState(command_list* cl) {
 
 void RegisterUpscaler() {
     LoadSettings();
-    Log("DLSS in place of the game's FSR 2: %s (F9), model %d, motion %s%s%s, jitter%s flipped, FSR 2 passes %s",
-        g_set.enabled ? "on" : "off", g_set.preset, kMotionUnitsNames[g_set.motionUnits], g_set.flipMotionX ? ", x flipped" : "",
+    ApplyMode();
+    Log("DLSS in place of the game's FSR 2: %s (F9), mode %s, model %d, motion %s%s%s, jitter%s flipped, FSR 2 passes %s",
+        g_set.enabled ? "on" : "off", kDlssModeNames[g_set.mode], g_set.preset, kMotionUnitsNames[g_set.motionUnits], g_set.flipMotionX ? ", x flipped" : "",
         g_set.flipMotionY ? ", y flipped" : "", g_set.flipJitter ? "" : " not", g_set.skipPasses ? "skipped" : "kept");
     reshade::register_event<reshade::addon_event::init_command_list>(&OnInitList);
     reshade::register_event<reshade::addon_event::destroy_command_list>(&OnDestroyList);
@@ -508,6 +628,8 @@ void RegisterUpscaler() {
 }
 
 void UnregisterUpscaler() {
+    if (g_ratio.patched) WriteCode(g_ratio.code, g_ratio.original, sizeof(g_ratio.original));  // the game's code back
+    g_ratio.patched = false;
     reshade::unregister_event<reshade::addon_event::init_command_list>(&OnInitList);
     reshade::unregister_event<reshade::addon_event::destroy_command_list>(&OnDestroyList);
     reshade::unregister_event<reshade::addon_event::reset_command_list>(&OnResetList);
@@ -525,8 +647,8 @@ std::string UpscalerHeadline(bool* warn) {
     if (!g_set.enabled) return "DLSS off (F9): the game's FSR 2 runs";
     if (Running()) {
         char buf[160];
-        snprintf(buf, sizeof(buf), "DLSS running: %ux%u -> %ux%u (render size = the game's FSR 2 quality)", g_render[0],
-                 g_render[1], g_display[0], g_display[1]);
+        snprintf(buf, sizeof(buf), "DLSS running: %ux%u -> %ux%u, %s", g_render[0], g_render[1], g_display[0],
+                 g_display[1], g_ratio.patched ? kDlssModeNames[g_set.mode] : "the game's FSR 2 quality");
         return buf;
     }
     *warn = true;
@@ -538,8 +660,15 @@ std::string UpscalerHeadline(bool* warn) {
 void DrawUpscalerSettings() {
     bool changed = false;
     if (ImGui::Checkbox("DLSS in place of FSR 2 (F9)", &g_set.enabled)) changed = true, g_resetNext = true;
-    Help("Choose FSR 2 in the game's graphics settings; its quality mode sets the render resolution, and DLSS "
-         "upscales instead of FSR 2.");
+    Help("Choose FSR 2 in the game's graphics settings, and DLSS upscales instead of FSR 2.");
+    ImGui::SetNextItemWidth(ControlWidth());
+    if (ImGui::Combo("DLSS mode", &g_set.mode, kDlssModeNames, kDlssModeCount)) {
+        changed = true;
+        ApplyMode();
+    }
+    Help("The render resolution. \"Game's FSR 2 setting\" uses the game's FSR 2 quality; the others override it "
+         "(the game's FSR 2 quality setting then doesn't matter). DLAA renders at native resolution.");
+    if (g_ratio.searched && !g_ratio.code) ImGui::TextColored(kWarn, "DLSS modes unavailable: %s", g_ratio.status.c_str());
     static const char* const kModels[] = {"Automatic", "NVIDIA default", "J", "K", "L", "M"};
     static const int kModelValues[] = {dlss::kPresetAuto, 0, 10, 11, 12, 13};
     int sel = 0;
