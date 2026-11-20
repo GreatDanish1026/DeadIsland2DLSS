@@ -49,12 +49,13 @@ if ($Probe) {
          "/link /DLL /OUT:`"$addon`" /PDB:`"$obj\DeadIsland2DLSS.pdb`" /DEBUG")
     ) -join " && "
 } else {
-    # 0.1.x: DLSS in place of the game's FSR 2 (fsr2dlss.cpp + CallistoDLSS's NGX wrapper dlss.cpp).
-    $sources = "`"$root\src\main.cpp`" `"$root\third_party\reshade\utils\descriptor_tracking.cpp`" `"$root\src\fsr2dlss.cpp`" `"$root\src\dlss.cpp`""
+    # DLSS or FSR 3.1/4 in place of the game's FSR 2 (fsr2dlss.cpp + CallistoDLSS's dlss.cpp and fsr.cpp).
+    $sources = "`"$root\src\main.cpp`" `"$root\third_party\reshade\utils\descriptor_tracking.cpp`" `"$root\src\fsr2dlss.cpp`" `"$root\src\dlss.cpp`" `"$root\src\fsr.cpp`""
     $cmd = @(
         "call `"$vcvars`" >nul",
         ("cl /nologo /std:c++17 /O2 /EHsc /MT /W3 /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX " + $include +
          "/I `"$root\third_party\dlss\include`" " +
+         "/I `"$root\third_party\fidelityfx\api\include`" /I `"$root\third_party\fidelityfx\upscalers\include`" " +
          "/Fo`"$obj\\`" $sources user32.lib advapi32.lib ole32.lib d3d12.lib dxgi.lib `"$root\third_party\dlss\lib\nvsdk_ngx_s.lib`" " +
          "/link /DLL /OUT:`"$addon`" /PDB:`"$obj\DeadIsland2DLSS.pdb`" /DEBUG")
     ) -join " && "
@@ -71,6 +72,12 @@ if ($Install) {
         $sl = "$root\third_party\streamline\bin\x64"
         if (-not (Test-Path "$sl\nvngx_dlss.dll")) { throw "nvngx_dlss.dll not found in $sl (Streamline 2.14.16 release)" }
         Copy-Item "$sl\nvngx_dlss.dll" $GameBin -Force
+        # AMD's signed FSR runtime (FSR SDK 2.4.0 Kits\FidelityFX\signedbin).
+        $ffx = "$root\third_party\fidelityfx\bin"
+        foreach ($f in "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll") {
+            if (-not (Test-Path "$ffx\$f")) { throw "$f not found in $ffx (FSR SDK 2.4.0 signedbin)" }
+            Copy-Item "$ffx\$f" $GameBin -Force
+        }
     }
     Write-Host "Installed $addon to $GameBin"
 }

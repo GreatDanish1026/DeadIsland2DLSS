@@ -203,3 +203,15 @@ User: "everything looked good". DLAA ratio 1.00049 (from the 2160 back buffer) -
 3839x2159 -> 3840x2160, DLSS took it (colour/motion textures 3840x2160), switches live to Quality
 and back. NGX had created it as "Quality mode" (dlss.cpp picked DLAA only at render >= output);
 0.2.3 (installed, not retested, only the NGX quality value changes): within 2 px counts as DLAA.
+
+## 0.3.0: FSR 3.1/4 option (2026-11-20, installed, untested)
+
+Upscaler setting (ini Upscaler: 0 Auto = DLSS if NGX starts else FSR, 1 DLSS, 2 FSR) with
+CallistoDLSS's fsr.cpp (FSR SDK 2.4.0 FidelityFX API; AMD's runtime picks FSR 4 on supported
+Radeons, else FSR 3.1). Same inputs as DLSS plus the game's FSR 2 reactive mask (reconstruct t2)
+and transparency/composition mask (t3, new fsr::Inputs::transparency). Jitter and motion scale as
+for DLSS (as the game gave FSR 2). Camera: near 10 cm (UE default; not read from the game), FOV =
+2*atan(cbFSR2 byte 108) when it reads like tan(FOV/2) (it read 1.0 in the 0.0.1 capture -> 90
+degrees; unverified), else 1.05 rad. FsrSharpness 0..1 (default 0, like the game's FSR 2). The
+Mode dropdown (render resolution) applies to both. Installs amd_fidelityfx_loader_dx12.dll and
+amd_fidelityfx_upscaler_dx12.dll next to the exe.

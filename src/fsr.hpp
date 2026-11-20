@@ -14,6 +14,7 @@ struct Inputs {
     ID3D12Resource* motion = nullptr;    // render resolution, previous minus current in pixels
     ID3D12Resource* output = nullptr;    // output resolution, UAV
     ID3D12Resource* reactive = nullptr;  // optional, render resolution r8: 1 = trust this frame over history
+    ID3D12Resource* transparency = nullptr;  // optional, render resolution r8: transparency and composition mask
     unsigned renderWidth = 0, renderHeight = 0;
     unsigned outputWidth = 0, outputHeight = 0;
     float jitterX = 0, jitterY = 0;  // in render pixels

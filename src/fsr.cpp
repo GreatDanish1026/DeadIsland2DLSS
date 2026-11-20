@@ -275,7 +275,7 @@ bool Evaluate(ID3D12GraphicsCommandList* list, const Inputs& in, std::string& er
     d.motionVectors = Res(in.motion, FFX_API_RESOURCE_STATE_COMPUTE_READ);
     d.exposure = Res(nullptr, FFX_API_RESOURCE_STATE_COMPUTE_READ);
     d.reactive = Res(in.reactive, FFX_API_RESOURCE_STATE_COMPUTE_READ);
-    d.transparencyAndComposition = Res(nullptr, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+    d.transparencyAndComposition = Res(in.transparency, FFX_API_RESOURCE_STATE_COMPUTE_READ);
     d.output = Res(in.output, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
     d.jitterOffset = {in.jitterX, in.jitterY};
     d.motionVectorScale = {in.motionScaleX, in.motionScaleY};

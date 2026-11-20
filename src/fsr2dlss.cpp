@@ -47,6 +47,7 @@
 
 #include "../third_party/reshade/utils/descriptor_tracking.hpp"
 #include "dlss.hpp"
+#include "fsr.hpp"
 #include "version.h"
 
 using namespace reshade::api;
@@ -61,7 +62,7 @@ constexpr uint32_t kUavTable = 0, kSrvTable = 1, kCbParam = 2, kSpdParam = 3;
 constexpr uint32_t kCbDwords = 37, kSpdDwords = 6;
 // Registers, by pass (FSR 2.1's binding order, confirmed by the 0.0.1 capture).
 constexpr uint32_t kPyramidColor = 0;                                       // t
-constexpr uint32_t kReconMotion = 0, kReconDepth = 1, kReconReactive = 2;  // t
+constexpr uint32_t kReconMotion = 0, kReconDepth = 1, kReconReactive = 2, kReconTransparency = 3;  // t
 constexpr uint32_t kAccumulateOutput = 2;                                   // u
 constexpr int kReconstructIndex = 2;
 
@@ -88,8 +89,15 @@ const float kDlssModeRatio[kDlssModeCount] = {0, 0 /* DlaaRatio */, 1.5f, 1.0f /
 enum MotionUnits { kMotionUv, kMotionPixels, kMotionUnitsCount };
 const char* const kMotionUnitsNames[kMotionUnitsCount] = {"UV (scaled by render size)", "Render pixels"};
 
+// Which upscaler replaces FSR 2. Auto: DLSS if NGX starts (NVIDIA RTX), else FSR (3.1, or 4 on
+// Radeons that support it; AMD's runtime decides).
+enum Backend { kAuto, kDlss, kFsr, kBackendCount };
+const char* const kBackendNames[kBackendCount] = {"Auto (DLSS on NVIDIA RTX, else FSR)", "DLSS", "FSR 3.1 / 4"};
+
 struct Settings {
     bool enabled = true;
+    int backend = kAuto;             // Upscaler
+    float sharpness = 0.0f;          // FsrSharpness: FSR's RCAS, 0..1 (the game's FSR 2 used 0)
     int preset = dlss::kPresetAuto;  // DlssModel
     int mode = kModeGame;            // DlssMode
     int motionUnits = kMotionUv;     // MotionUnits (test)
@@ -101,6 +109,10 @@ struct Settings {
 
 void LoadSettings() {
     reshade::get_config_value(nullptr, RD_PRODUCT, "Enabled", g_set.enabled);
+    reshade::get_config_value(nullptr, RD_PRODUCT, "Upscaler", g_set.backend);
+    if (g_set.backend < 0 || g_set.backend >= kBackendCount) g_set.backend = kAuto;
+    reshade::get_config_value(nullptr, RD_PRODUCT, "FsrSharpness", g_set.sharpness);
+    if (!(g_set.sharpness >= 0 && g_set.sharpness <= 1)) g_set.sharpness = 0;
     reshade::get_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
     reshade::get_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
     if (g_set.mode < 0 || g_set.mode >= kDlssModeCount) g_set.mode = kModeGame;
@@ -115,6 +127,8 @@ void LoadSettings() {
 
 void SaveSettings() {
     reshade::set_config_value(nullptr, RD_PRODUCT, "Enabled", g_set.enabled);
+    reshade::set_config_value(nullptr, RD_PRODUCT, "Upscaler", g_set.backend);
+    reshade::set_config_value(nullptr, RD_PRODUCT, "FsrSharpness", g_set.sharpness);
     reshade::set_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
     reshade::set_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
     reshade::set_config_value(nullptr, RD_PRODUCT, "MotionUnits", g_set.motionUnits);
@@ -139,6 +153,10 @@ std::map<std::string, uint32_t> g_why;  // reasons the game's FSR 2 was kept, th
 uint32_t g_evaluated = 0, g_kept = 0, g_skippedPasses = 0;  // this log window
 int g_statLines = 0;
 std::set<uint32_t> g_idsLogged;
+int g_autoBackend = 0;  // what Auto resolved to (kDlss or kFsr), once
+int g_lastBackend = 0;  // the upscaler that ran last (0 = none yet)
+
+const char* BackendName(int b) { return b == kDlss ? "DLSS" : b == kFsr ? "FSR" : "upscaler"; }
 
 void Why(const std::string& why) {
     ++g_why[why];
@@ -289,7 +307,7 @@ struct StageState {
 // One FSR 2 run's inputs, gathered in the command list as its passes are recorded.
 struct Chain {
     int next = -1;  // index of the next FSR 2 pass (-1: none seen since the last accumulate)
-    resource color = {0}, depth = {0}, motion = {0}, reactive = {0};
+    resource color = {0}, depth = {0}, motion = {0}, reactive = {0}, transparency = {0};
 };
 
 struct __declspec(uuid("b6a2c5e4-1f3d-4e8a-9c71-2d5e8f0a3b47")) ListState {
@@ -486,9 +504,26 @@ bool OnAccumulate(command_list* cl, ListState& s) {
 
     ID3D12Device* native = reinterpret_cast<ID3D12Device*>(dev->get_native());
     std::string err;
-    if (!dlss::Init(native, err)) {
+    int backend = g_set.backend;
+    if (backend == kAuto) {
+        if (!g_autoBackend) {
+            std::string e;
+            g_autoBackend = dlss::Init(native, e) ? kDlss : kFsr;
+            Log("upscaler Auto: %s%s%s", BackendName(g_autoBackend), e.empty() ? "" : " (DLSS: ",
+                e.empty() ? "" : (e + ")").c_str());
+        }
+        backend = g_autoBackend;
+    }
+    if (backend != g_lastBackend) {  // the other upscaler starts its own history
+        if (g_lastBackend == kDlss) dlss::ReleaseFeatures();
+        if (g_lastBackend == kFsr) fsr::ReleaseContexts();
+        if (g_lastBackend) Log("upscaler: %s", BackendName(backend));
+        g_lastBackend = backend;
+        g_resetNext = true;
+    }
+    if (!(backend == kDlss ? dlss::Init(native, err) : fsr::Init(native, err))) {
         g_error = err;
-        Why("DLSS isn't available");
+        Why(std::string(BackendName(backend)) + " isn't available");
         return false;
     }
     const bool reset = g_resetNext || frameIndex < g_lastFrameIndex || frameIndex == 0 || rw != g_render[0] ||
@@ -496,8 +531,8 @@ bool OnAccumulate(command_list* cl, ListState& s) {
     g_resetNext = false;
     g_lastFrameIndex = frameIndex;
     if (rw != g_render[0] || rh != g_render[1] || dw != g_display[0] || dh != g_display[1])
-        Log("FSR 2 render %ux%u -> %ux%u: DLSS takes it (colour %ux%u fmt %u, depth %ux%u fmt %u, motion %ux%u fmt %u, output fmt %u)",
-            rw, rh, dw, dh, cd.texture.width, cd.texture.height, static_cast<uint32_t>(cd.texture.format), dd.texture.width,
+        Log("FSR 2 render %ux%u -> %ux%u: %s takes it (colour %ux%u fmt %u, depth %ux%u fmt %u, motion %ux%u fmt %u, output fmt %u)",
+            rw, rh, dw, dh, BackendName(backend), cd.texture.width, cd.texture.height, static_cast<uint32_t>(cd.texture.format), dd.texture.width,
             dd.texture.height, static_cast<uint32_t>(dd.texture.format), md.texture.width, md.texture.height,
             static_cast<uint32_t>(md.texture.format), static_cast<uint32_t>(od.texture.format));
     g_render[0] = rw, g_render[1] = rh, g_display[0] = dw, g_display[1] = dh;
@@ -517,19 +552,41 @@ bool OnAccumulate(command_list* cl, ListState& s) {
     in.motionScaleY = (g_set.flipMotionY ? -1.0f : 1.0f) * (ms ? float(rh) : 1.0f);
     in.reset = reset;
     in.preset = g_set.preset;
-    const bool ok = dlss::Evaluate(reinterpret_cast<ID3D12GraphicsCommandList*>(cl->get_native()), in, err);
+    auto* list = reinterpret_cast<ID3D12GraphicsCommandList*>(cl->get_native());
+    bool ok;
+    if (backend == kDlss) {
+        ok = dlss::Evaluate(list, in, err);
+    } else {
+        fsr::Inputs fi;
+        fi.color = in.color, fi.depth = in.depth, fi.motion = in.motion, fi.output = in.output;
+        // The game's own FSR 2 masks (the plugin builds them for FSR 2: same meaning in FSR 3.1).
+        fi.reactive = reinterpret_cast<ID3D12Resource*>(c.reactive.handle);
+        fi.transparency = reinterpret_cast<ID3D12Resource*>(c.transparency.handle);
+        fi.renderWidth = rw, fi.renderHeight = rh, fi.outputWidth = dw, fi.outputHeight = dh;
+        fi.jitterX = in.jitterX, fi.jitterY = in.jitterY;  // as the game gave FSR 2
+        fi.motionScaleX = in.motionScaleX, fi.motionScaleY = in.motionScaleY;
+        // Camera: UE's default near plane (10 cm) and the FOV the game gave FSR 2 (cbFSR2 byte 108,
+        // if it reads as tan(FOV/2); else about 60 degrees). FSR uses them only in its depth heuristics.
+        fi.cameraNear = 10.0f;
+        float tanHalf;
+        memcpy(&tanHalf, cb + 27, 4);
+        fi.cameraFovY = tanHalf > 0.1f && tanHalf < 4.0f ? 2.0f * std::atan(tanHalf) : 1.05f;
+        fi.sharpness = g_set.sharpness;
+        fi.reset = reset;
+        ok = fsr::Evaluate(list, fi, err);
+    }
     cl->barrier(output, resource_usage::unordered_access, resource_usage::unordered_access);
     Restore(cl, s);
     if (!ok) {
-        if (g_error != err) Log("DLSS: %s", err.c_str());
+        if (g_error != err) Log("%s: %s", BackendName(backend), err.c_str());
         g_error = err;
         g_resetNext = true;
-        Why("DLSS failed");
+        Why(std::string(BackendName(backend)) + " failed");
         return false;
     }
     if (g_evaluated == 0 && g_lastDlssPresent.load() == 0)
-        Log("DLSS: first frame %ux%u -> %ux%u, jitter %.3f %.3f, frame index %u", rw, rh, dw, dh, in.jitterX, in.jitterY,
-            frameIndex);
+        Log("%s: first frame %ux%u -> %ux%u, jitter %.3f %.3f, frame index %u", BackendName(backend), rw, rh, dw, dh,
+            in.jitterX, in.jitterY, frameIndex);
     g_error.clear();
     ++g_evaluated;
     g_lastDlssPresent = g_presents.load();
@@ -558,6 +615,7 @@ bool OnDispatch(command_list* cl, uint32_t x, uint32_t y, uint32_t) {
         c.motion = Bound(cl, s->compute, kSrvTable, kReconMotion, nullptr);
         c.depth = Bound(cl, s->compute, kSrvTable, kReconDepth, nullptr);
         c.reactive = Bound(cl, s->compute, kSrvTable, kReconReactive, nullptr);
+        c.transparency = Bound(cl, s->compute, kSrvTable, kReconTransparency, nullptr);
     }
     if (!g_set.enabled) {
         c.next = accumulate ? -1 : (c.next >= 0 ? c.next + 1 : -1);
@@ -608,6 +666,7 @@ void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t
     }
     LogStats();
     dlss::EndFrame();
+    fsr::EndFrame();
     HWND fg = GetForegroundWindow();
     DWORD pid = 0;
     GetWindowThreadProcessId(fg, &pid);
@@ -621,7 +680,10 @@ void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t
     g_keyWasDown = down;
 }
 
-void OnDestroyDevice(device*) { dlss::Shutdown(); }
+void OnDestroyDevice(device*) {
+    dlss::Shutdown();
+    fsr::Shutdown();
+}
 
 bool Running() { return g_presents.load() - g_lastDlssPresent.load() < 30 && g_lastDlssPresent.load() > 0; }
 bool Fsr2Seen() { return g_presents.load() - g_lastFsr2Present.load() < 30 && g_lastFsr2Present.load() > 0; }
@@ -667,33 +729,41 @@ void UnregisterUpscaler() {
 
 std::string UpscalerHeadline(bool* warn) {
     *warn = false;
-    if (!g_set.enabled) return "DLSS off (F9): the game's FSR 2 runs";
+    if (!g_set.enabled) return "Off (F9): the game's FSR 2 runs";
+    const std::string name = g_lastBackend == kFsr ? fsr::VersionName() : "DLSS";
     if (Running()) {
-        char buf[160];
-        snprintf(buf, sizeof(buf), "DLSS running: %ux%u -> %ux%u, %s", g_render[0], g_render[1], g_display[0],
+        char buf[200];
+        snprintf(buf, sizeof(buf), "%s running: %ux%u -> %ux%u, %s", name.c_str(), g_render[0], g_render[1], g_display[0],
                  g_display[1], g_ratio.patched ? kDlssModeNames[g_set.mode] : "the game's FSR 2 quality");
         return buf;
     }
     *warn = true;
-    if (!g_error.empty()) return "DLSS not running: " + g_error;
+    if (!g_error.empty()) return name + " not running: " + g_error;
     if (!Fsr2Seen() && g_ratio.patched && g_lastDlssPresent.load() > 0)
-        return std::string("The game stopped running FSR 2 in ") + kDlssModeNames[g_set.mode] + ": try another DLSS mode";
+        return std::string("The game stopped running FSR 2 in ") + kDlssModeNames[g_set.mode] + ": try another mode";
     if (!Fsr2Seen()) return "Waiting for the game's FSR 2: choose FSR 2 in the game's graphics settings";
-    return "DLSS not running: the game's FSR 2 is kept (see the log)";
+    return name + " not running: the game's FSR 2 is kept (see the log)";
 }
 
 void DrawUpscalerSettings() {
     bool changed = false;
-    if (ImGui::Checkbox("DLSS in place of FSR 2 (F9)", &g_set.enabled)) changed = true, g_resetNext = true;
-    Help("Choose FSR 2 in the game's graphics settings, and DLSS upscales instead of FSR 2.");
+    if (ImGui::Checkbox("Replace the game's FSR 2 (F9)", &g_set.enabled)) changed = true, g_resetNext = true;
+    Help("Choose FSR 2 in the game's graphics settings, and DLSS or FSR 3.1/4 upscales instead of FSR 2.");
     ImGui::SetNextItemWidth(ControlWidth());
-    if (ImGui::Combo("DLSS mode", &g_set.mode, kDlssModeNames, kDlssModeCount)) {
+    if (ImGui::Combo("Upscaler", &g_set.backend, kBackendNames, kBackendCount)) changed = true, g_resetNext = true;
+    Help("FSR 3.1 runs on any DirectX 12 GPU; on Radeons that support it, AMD's runtime picks FSR 4.");
+    ImGui::SetNextItemWidth(ControlWidth());
+    if (ImGui::Combo("Mode", &g_set.mode, kDlssModeNames, kDlssModeCount)) {
         changed = true;
         ApplyMode();
     }
     Help("The render resolution. \"Game's FSR 2 setting\" uses the game's FSR 2 quality; the others override it "
-         "(the game's FSR 2 quality setting then doesn't matter). DLAA renders at native resolution.");
-    if (g_ratio.searched && !g_ratio.code) ImGui::TextColored(kWarn, "DLSS modes unavailable: %s", g_ratio.status.c_str());
+         "(the game's FSR 2 quality setting then doesn't matter). DLAA renders at native resolution (with FSR: "
+         "native AA).");
+    if (g_ratio.searched && !g_ratio.code) ImGui::TextColored(kWarn, "Modes unavailable: %s", g_ratio.status.c_str());
+    ImGui::SetNextItemWidth(ControlWidth());
+    if (ImGui::SliderFloat("FSR sharpness", &g_set.sharpness, 0.0f, 1.0f, "%.2f")) changed = true;
+    Help("FSR's sharpening (RCAS). 0 = none, as the game's FSR 2. DLSS doesn't use it.");
     static const char* const kModels[] = {"Automatic", "NVIDIA default", "J", "K", "L", "M"};
     static const int kModelValues[] = {dlss::kPresetAuto, 0, 10, 11, 12, 13};
     int sel = 0;
@@ -707,7 +777,8 @@ void DrawUpscalerSettings() {
 }
 
 void DrawUpscalerStatus() {
-    ImGui::TextUnformatted(dlss::Status().c_str());
+    ImGui::Text("DLSS: %s", dlss::Status().c_str());
+    ImGui::Text("FSR: %s", fsr::Status().c_str());
     ImGui::Text("Game's FSR 2: %s", Fsr2Seen() ? "running" : "not seen in the last frames");
     if (!g_error.empty()) ImGui::TextColored(kWarn, "Last error: %s", g_error.c_str());
 }
