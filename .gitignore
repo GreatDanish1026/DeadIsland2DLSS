@@ -7,3 +7,4 @@ __pycache__/
 _downloads/
 third_party/streamline/bin/*.dll
 _optiscaler-backup-*/
+_captures/

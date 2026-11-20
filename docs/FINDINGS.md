@@ -59,7 +59,8 @@ which ships the same AMD FSR 2 UE plugin).
 The first run wrote nothing (no ReShade.log, no DeadIsland2DLSS.log): the exe doesn't import
 dinput8.dll (imports include dxgi.dll, d3d11.dll, d3d9.dll; d3d12.dll delay-loaded), so ReShade
 as dinput8.dll was never loaded. With OptiScaler it had been loaded through OptiScaler's dxgi.dll.
-ReShade is now dxgi.dll (renamed, same file, 6.8.0.2152).
+ReShade is now dxgi.dll (renamed, same file, 6.8.0.2152). renodx-dlssfix.addon64 was gone at the
+second run (removed by the user).
 
 ## Plan
 
@@ -75,8 +76,66 @@ ReShade is now dxgi.dll (renamed, same file, 6.8.0.2152).
 3. Then FSR 3.1/4, DLSS frame generation and FSR FG (CallistoDLSS's framegen.cpp, fsrfg.cpp,
    hdrswap.cpp for the game's HDR swapchain).
 
-## Probe 0.0.1 (built and installed 2026-11-20, not run yet)
+## Probe 0.0.1
 
 Built from main.cpp (F10 capture, kTsrMapped=false: every compute pass written in full, root
 constants now logged too, non-DXBC tables read guarded) and probe.cpp (read only). Nothing is set
 or skipped. Writes DeadIsland2DLSS.log and DeadIsland2DLSS-frame-N.txt next to the exe.
+
+### Run 2026-11-20 (4K HDR, FSR 2 Quality, then TAA), no crash, clean unload after 15,292 presents
+
+cvars (layout check passed: UE 4.25-4.27 vtable layout, IsVariableBool slot 0x30, console manager
+found 5/5): the game's menu sets r.FidelityFX.FSR2.Enabled 0/1 and QualityMode at SetByCode
+(0x08) and EnableWithIdealSettings 1 with FSR 2; UseNativeDX12 1, Sharpness 0 (no RCAS pass),
+CreateReactiveMask 1, AutoExposure 0, DeDither 2, AdjustMipBias 1; r.ScreenPercentage 100 (FSR 2
+sets its own render size), r.DefaultFeature.AntiAliasing 2 (TAA), r.TemporalAA.Upscaler 1,
+r.HDR.EnableHDROutput 1, OutputDevice 3, ColorGamut 2, back buffer 3840x2160 rgb10a2 (HDR10).
+r.RayTracing 0.
+
+FSR 2 = **FSR 2.1, FFX native DX12 backend**, 6 compute passes (DXIL), cbFSR2 as 37 **root
+constants at root param 2** (148 bytes), plus 6 SPD constants at param 3 for the pyramid. FFX binds
+each pass's descriptor tables (param 0 = UAV table, param 1 = SRV table) **before** its pipeline,
+so in the capture the tables listed after a dispatch belong to the next pass. Order and slots
+(capture 1, Quality 2560x1440 -> 3840x2160); slot orders match FSR 2.1's shader bindings:
+
+| pass | id | dispatch | SRVs | UAVs |
+|---|---|---|---|---|
+| compute luminance pyramid | cs07e74148 | 40x23 | t0 input colour #87fce 2560x1440 rgba16f | u0 SPD counter 1x1 r32uint, mips r16f 1280x720 mips11, auto exposure 1x1 rg32f |
+| prepare input colour | cs78b5ccfe | 320x180 | t0 input colour, t1 exposure (UE eye adaptation 4x1 rgba32f #63830) | u0 reconstructed prev depth r32uint, u1 prepared colour rgba16f, u2 luma history rgba8 |
+| reconstruct + dilate | cs240d257d | 320x180 | **t0 motion #87cd1 2560x1440 rg16f**, **t1 depth #6217a 3840x2160 r32g8x24** (UE scene depth, view at top-left), **t2 reactive r8unorm #87c38**, **t3 transparency/composition r8unorm #87f35**, t4 prepared colour | u0 prev depth, u1 dilated motion rg16f, u2 dilated depth r32f, u3 dilated reactive rg8 |
+| depth clip | cs089f5b7b | 320x180 | t0 prev depth, t1 dilated motion, t2 dilated depth, ... | u0 depth clip r8 |
+| lock | cs3a8b05d2 | 320x180 | ... | u0 lock status 3840x2160 r11g11b10f |
+| accumulate | csfbd2dd5b | 480x270 | t0 exposure, t1 auto exposure, t2 dilated motion, t3 history rgba16f, t4 lock, t5 depth clip, t6 prepared colour, t7 luma history, ... | u0 internal history 3840x2160 rgba16f, u1 lock, **u2 output #733ce 3840x2160 rgba16f** (srv -> uav before the lock pass, uav -> srv after; post-processing reads it) |
+
+Before FSR 2, the plugin's own passes (DXBC, UE style: pipeline, then tables, then View at root
+CBV param 3): csc7e3dbe7 converts UE velocity (t1 #628a6 3840x2160 rg16unorm) + depth (t0) into
+FSR's motion #87cd1 (u0, render size rg16f; 480x270 dispatch); another pass writes the render-size
+input colour #87fce (uav -> srv before the pyramid).
+
+cbFSR2 (FSR 2.1 layout; values at Quality): 0 iRenderSize 2560 1440; 8 iDisplaySize 3840 2160;
+16 uLumaMipDimensions 80 45; 24 uLumaMipLevelToUse 4; 28 **uFrameIndex** (0, 1, ...); 32
+fDisplaySizeRcp; 40 **fJitter in render pixels** (0.25 -0.389, then -0.375 -0.056); 48
+fDeviceToViewDepth (1.19e-7, -1, 0.1, 1.19e-7: reverse-Z, infinite far, near 0.1 cm-units?); 64..
+(1 1 1 1); 80 1/render size; 96 fDownscaleFactor 0.667 0.667; 104 0.1209 (pre-exposure, likely),
+108 1; 120 fJitterSequenceLength 18; 128 1/19; 140 1/1024 (luma mip rcp); 144 (0, then 0.1209:
+previous pre-exposure?).
+
+UE's own TAA (capture 2, FSR 2 off, 100%): **cs3e816dfc**, DXBC, UE 4.26 shape: t0 eye adaptation
+4x1 rgba32f, t1 scene colour 3840x2160 rgba16f, t2 depth r32g8x24, t3 velocity rg16unorm, t4
+stencil (fmt65), t5 depth again, t6 history rgba16f; u0 output rgba16f; root CBV param 3 its own
+parameters (16 KB buffer with a ~1.8 KB repeating struct, not the View). The View uniform buffer
+wasn't identified: the probe's View heuristic matched other buffers (its "UE 4.25 layout does NOT
+hold" lines are not meaningful). Needed only for frame generation / Ray Reconstruction later.
+
+### Decision: approach B (RE4DLSS style)
+
+DLSS (and FSR 3.1/4) takes the accumulate dispatch csfbd2dd5b: colour #87fce (pyramid t0), depth
+(reconstruct t1, 3840x2160 texture, render-size subrect), motion (reconstruct t0, UV units:
+DLSS scale = render size, sign to confirm), jitter cbFSR2 byte 40, reset when uFrameIndex drops,
+exposure = pre-exposure (byte 104) or UE's eye adaptation texture, reactive masks for FSR 3.1/
+DLSS bias; output into the accumulate's u2. The five FSR 2 passes before it are skipped. Render
+size = the game's FSR 2 quality (2.1 has Quality/Balanced/Performance/Ultra Performance; DLAA would
+need a cvar or a forced screen percentage). FSR 2's tables are read guarded at each FSR 2 dispatch
+(tables bound before the pipeline: track them per command list, don't clear on pipeline bind).
+Fallback: approach A (hold FSR2.Enabled=0, replace UE's TAA cs3e816dfc).
+- Run 1 log and captures kept in _captures/run1 (gitignored).
