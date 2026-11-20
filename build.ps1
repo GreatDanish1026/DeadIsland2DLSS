@@ -23,7 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $exe = "DeadIsland-Win64-Shipping.exe"
-$Probe = $true
+$Probe = $false  # $true builds the 0.0.x probe (main.cpp + probe.cpp, read only)
 
 # The user's PATH has a Steam DSX entry with "(x86)" that breaks vcvars64.bat under cmd /c.
 $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and $_ -notmatch 'DSX' }) -join ';'
@@ -49,7 +49,15 @@ if ($Probe) {
          "/link /DLL /OUT:`"$addon`" /PDB:`"$obj\DeadIsland2DLSS.pdb`" /DEBUG")
     ) -join " && "
 } else {
-    throw "The upscaler build isn't set up yet for Dead Island 2 (see CallistoDLSS's build.ps1)."
+    # 0.1.x: DLSS in place of the game's FSR 2 (fsr2dlss.cpp + CallistoDLSS's NGX wrapper dlss.cpp).
+    $sources = "`"$root\src\main.cpp`" `"$root\third_party\reshade\utils\descriptor_tracking.cpp`" `"$root\src\fsr2dlss.cpp`" `"$root\src\dlss.cpp`""
+    $cmd = @(
+        "call `"$vcvars`" >nul",
+        ("cl /nologo /std:c++17 /O2 /EHsc /MT /W3 /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX " + $include +
+         "/I `"$root\third_party\dlss\include`" " +
+         "/Fo`"$obj\\`" $sources user32.lib advapi32.lib ole32.lib d3d12.lib dxgi.lib `"$root\third_party\dlss\lib\nvsdk_ngx_s.lib`" " +
+         "/link /DLL /OUT:`"$addon`" /PDB:`"$obj\DeadIsland2DLSS.pdb`" /DEBUG")
+    ) -join " && "
 }
 cmd /c $cmd
 if ($LASTEXITCODE) { throw "build failed" }
@@ -59,6 +67,11 @@ if ($Install) {
     if (-not (Test-Path "$GameBin\$exe")) { throw "$exe not found in $GameBin (pass -GameBin)" }
     if (Get-Process ([IO.Path]::GetFileNameWithoutExtension($exe)) -ErrorAction SilentlyContinue) { throw "Close the game first." }
     Copy-Item $addon $GameBin -Force
+    if (-not $Probe) {
+        $sl = "$root\third_party\streamline\bin\x64"
+        if (-not (Test-Path "$sl\nvngx_dlss.dll")) { throw "nvngx_dlss.dll not found in $sl (Streamline 2.14.16 release)" }
+        Copy-Item "$sl\nvngx_dlss.dll" $GameBin -Force
+    }
     Write-Host "Installed $addon to $GameBin"
 }
 

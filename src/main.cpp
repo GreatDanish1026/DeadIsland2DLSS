@@ -706,19 +706,14 @@ void DrawOverlay(effect_runtime*) {
     const std::string up = rd::UpscalerHeadline(&warn);
     if (warn) ImGui::TextColored(rd::kWarn, "%s", up.c_str());
     else ImGui::TextUnformatted(up.c_str());
-    const std::string fg = rd::FrameGenHeadline(&warn);
-    if (warn) ImGui::TextColored(rd::kWarn, "%s", fg.c_str());
-    else ImGui::TextUnformatted(fg.c_str());
     ImGui::Spacing();
     if (!ImGui::BeginTabBar("tabs")) return;
     if (ImGui::BeginTabItem("Settings")) {
         rd::DrawUpscalerSettings();
-        rd::DrawFrameGenSettings();
         ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Status")) {
         rd::DrawUpscalerStatus();
-        rd::DrawFrameGenStatus();
         ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Advanced")) {
@@ -728,11 +723,11 @@ void DrawOverlay(effect_runtime*) {
         if (ImGui::Button("Capture frame (F10)")) StartCapture();
         ImGui::EndDisabled();
         rd::Help("Writes every command of two frames to DeadIsland2DLSS-frame-N.txt next to the game's exe, for "
-                 "finding TSR's passes again after a game update.");
+                 "finding FSR 2's passes again after a game update.");
         ImGui::SameLine();
         ImGui::TextDisabled("%s", g_capture.load() == Capture::Recording ? "recording..." : g_status.c_str());
         ImGui::SeparatorText("Logs");
-        ImGui::TextDisabled("DeadIsland2DLSS.log and streamline\\sl.log next to the game's exe");
+        ImGui::TextDisabled("DeadIsland2DLSS.log next to the game's exe");
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
@@ -805,8 +800,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
 #ifdef RD_PROBE
             rd::RegisterProbe();
 #else
-            rd::RegisterUpscaler();
-            rd::RegisterFrameGen();
+            rd::RegisterUpscaler();  // fsr2dlss.cpp (frame generation: later)
 #endif
             reshade::register_event<reshade::addon_event::init_pipeline>(&OnInitPipeline);
             reshade::register_event<reshade::addon_event::destroy_pipeline>(&OnDestroyPipeline);
@@ -832,7 +826,6 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
 #ifdef RD_PROBE
             rd::UnregisterProbe();
 #else
-            rd::UnregisterFrameGen();
             rd::UnregisterUpscaler();
 #endif
             descriptor_tracking::unregister_events();

@@ -139,3 +139,19 @@ need a cvar or a forced screen percentage). FSR 2's tables are read guarded at e
 (tables bound before the pipeline: track them per command list, don't clear on pipeline bind).
 Fallback: approach A (hold FSR2.Enabled=0, replace UE's TAA cs3e816dfc).
 - Run 1 log and captures kept in _captures/run1 (gitignored).
+
+## 0.1.0 (built and installed 2026-11-20, untested)
+
+src/fsr2dlss.cpp: DLSS at FSR 2's accumulate. FSR 2 passes found by their cbFSR2 root constants
+(param 2, 37 values, sizes plausible) and order (pyramid = the pass with 6 SPD constants at param
+3; accumulate = the dispatch covering the display size in 8x8 tiles; index 2 = reconstruct);
+shader ids only logged. Inputs: colour = pyramid t1-table t0; motion, depth, reactive =
+reconstruct t0/t1/t2; output = accumulate u2. Jitter cbFSR2 byte 40 as is, motion scaled by
+render size (FSR 2 UV units, assumed from the UE plugin), reset when uFrameIndex drops or sizes
+change. Passes 0-4 skipped while DLSS ran at the last accumulate. Test switches in the overlay's
+Advanced tab / ReShade.ini [DeadIsland2DLSS]: MotionUnits (0 UV, 1 pixels), FlipMotionX/Y,
+FlipJitter, SkipFsr2Passes, ReactiveBias. F9 toggles. Installs nvngx_dlss.dll 310.9.16 next to the
+exe. Own NGX project id. Not built: CallistoDLSS's upscaler.cpp, framegen.cpp, fsr*.cpp,
+hdrswap.cpp (reference for later steps); probe.cpp (build.ps1 $Probe = $true).
+
+Also in the game folder (not ours): PSOBoost.addon64 (2026-11-20 15:01, the PSOBoost project).

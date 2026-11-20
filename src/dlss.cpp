@@ -22,7 +22,7 @@ namespace dlss {
 namespace {
 
 // Project id for NVSDK_NGX_ENGINE_TYPE_CUSTOM (any GUID identifying this application).
-constexpr const char* kProjectId = "6f1d6e2a-5b8c-4f2e-9a43-7c2b8e1d4a90";
+constexpr const char* kProjectId = "9b751b21-d9ef-4aa0-9ff7-e0b2f1121777";
 
 std::mutex g_mutex;
 ID3D12Device* g_device = nullptr;
