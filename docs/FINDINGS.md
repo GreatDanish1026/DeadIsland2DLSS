@@ -215,3 +215,10 @@ for DLSS (as the game gave FSR 2). Camera: near 10 cm (UE default; not read from
 degrees; unverified), else 1.05 rad. FsrSharpness 0..1 (default 0, like the game's FSR 2). The
 Mode dropdown (render resolution) applies to both. Installs amd_fidelityfx_loader_dx12.dll and
 amd_fidelityfx_upscaler_dx12.dll next to the exe.
+
+## 0.3.0 test: FSR WORKS (2026-11-20)
+
+User: "it looked great". Log: Auto picked DLSS; DLAA now created as NGX DLAA mode (0.2.3 fix
+confirmed); switched to FSR: runtime offered FSR 3.1.6 and 2.3.4 on the RTX 5080, FSR 3.1.6 ran
+at native AA (3839x2159), Quality, Balanced, Performance, switching live; back to DLSS cleanly.
+FSR 4 (Radeon) untested.
