@@ -176,3 +176,12 @@ also on unload. FSR 2's accumulate is now picked by order (sixth pass after the 
 display-sized dispatch, since at native resolution passes 1-4 are display-sized too.
 Unknown until tested: whether the plugin accepts ratio 1.0, and whether it notices a live change
 (it may only recreate its FSR 2 context when its quality mode changes).
+
+## 0.2.0 test (2026-11-20)
+
+Quality/Balanced/Performance/Ultra Performance work and switch live (the plugin re-reads the ratio
+every frame: new render size within ~20 ms): 2560x1440, 2228x1253, 1920x1080, 1280x720 -> 4K,
+presets K/K/M/L. UE rounds the render size UP (ceil(3840/1.7241) = 2228, game's 1.7 gave 2259).
+**DLAA at ratio exactly 1.0: the game stops running FSR 2 altogether** (no FSR 2 passes; overlay
+"waiting for FSR 2"; changing the in-game quality didn't help). 0.2.1 (installed, untested): DLAA
+uses ratio 1.0001 (ceil gives 3840x2160 still, but it counts as upscaling).

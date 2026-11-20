@@ -77,7 +77,11 @@ const uint32_t kKnownIds[6] = {0x07e74148, 0x78b5ccfe, 0x240d257d, 0x089f5b7b, 0
 enum DlssMode { kModeGame, kModeDlaa, kModeQuality, kModeBalanced, kModePerformance, kModeUltraPerformance, kDlssModeCount };
 const char* const kDlssModeNames[kDlssModeCount] = {"Game's FSR 2 setting", "DLAA (native, 100%)", "Quality (67%)",
                                                     "Balanced (58%)", "Performance (50%)", "Ultra Performance (33%)"};
-const float kDlssModeRatio[kDlssModeCount] = {0, 1.0f, 1.5f, 1.0f / 0.58f, 2.0f, 3.0f};
+// DLAA: at exactly 1.0 the game stops running FSR 2 (0.2.0 test: no FSR 2 passes at all, presumably
+// UE/the plugin skip the temporal upscaler at 100%). UE rounds the render size up (Balanced 1.7241 gave
+// 2228x1253 = ceil(3840/1.7241) x ceil(2160/1.7241)), so a ratio just above 1 still renders the full
+// display size while counting as upscaling.
+const float kDlssModeRatio[kDlssModeCount] = {0, 1.0001f, 1.5f, 1.0f / 0.58f, 2.0f, 3.0f};
 
 enum MotionUnits { kMotionUv, kMotionPixels, kMotionUnitsCount };
 const char* const kMotionUnitsNames[kMotionUnitsCount] = {"UV (scaled by render size)", "Render pixels"};
@@ -240,7 +244,7 @@ void ApplyMode() {
     g_ratio.patched = true;
     g_ratio.ratio = want;
     g_resetNext = true;
-    Log("DLSS mode %s: FSR 2's upscale ratio is now %.4f for every quality mode", kDlssModeNames[g_set.mode], want);
+    Log("DLSS mode %s: FSR 2's upscale ratio is now %.5f for every quality mode", kDlssModeNames[g_set.mode], want);
 }
 
 // ---------------------------------------------------------------- per command list bindings
@@ -653,6 +657,8 @@ std::string UpscalerHeadline(bool* warn) {
     }
     *warn = true;
     if (!g_error.empty()) return "DLSS not running: " + g_error;
+    if (!Fsr2Seen() && g_ratio.patched && g_lastDlssPresent.load() > 0)
+        return std::string("The game stopped running FSR 2 in ") + kDlssModeNames[g_set.mode] + ": try another DLSS mode";
     if (!Fsr2Seen()) return "Waiting for the game's FSR 2: choose FSR 2 in the game's graphics settings";
     return "DLSS not running: the game's FSR 2 is kept (see the log)";
 }
