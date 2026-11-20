@@ -246,3 +246,13 @@ jitter, reset, motion scale = render size: FSR 2's UV units). FrameGenTag/fsrfg 
 (Callisto's motion was in pixels). Installs streamline\ (sl.*, nvngx_dlssg, nvngx_dlss copy) and
 amd_fidelityfx_framegeneration_dx12.dll. Frame generation choice needs a game restart (Streamline
 or FSR's swapchain is set up at launch). Pre-HUD picture (hudless) off, as in Callisto.
+
+## 0.4.0 test: DLSS FRAME GENERATION WORKS (2026-11-20)
+
+User: "looks good". DLSS + DLSS-G 2x (FrameGenMode 1, tech DLSS): Streamline 2.14 started for the
+game's swapchain (created through Streamline, HDR10 rgb10a2, colour space 3 after the HDR switch;
+hdrswap passes it through), View check passed (projection 1.0 / 1.7778 this time = 90 degrees
+horizontal, 58.7 vertical: the FOV differs from capture 1, read live), first frame tagged at
+submission, 2 frames presented per game frame. Untagged presents only twice (one frame at
+15:47:21, four in a row at 15:47:54: menu/loading without FSR 2) -> paused, resumed 1 s later.
+Clean Streamline shutdown at exit. Not yet tried: 3x/4x/Dynamic, FSR FG 2x, FSR upscaling + FG.
