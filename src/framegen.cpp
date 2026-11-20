@@ -54,7 +54,7 @@ using namespace reshade::api;
 namespace rd {
 namespace {
 
-constexpr const char* kProjectId = "6f1d6e2a-5b8c-4f2e-9a43-7c2b8e1d4a90";
+constexpr const char* kProjectId = "9b751b21-d9ef-4aa0-9ff7-e0b2f1121777";  // DeadIsland2DLSS (as dlss.cpp)
 
 // Byte offsets in UE 4.25's View uniform buffer (FViewUniformShaderParameters), read from a capture
 // (docs/FINDINGS.md): TranslatedWorldToClip 0, WorldToClip 64 (UE 4 has no relative world; the
@@ -145,6 +145,7 @@ struct PendingInputs {
     ID3D12Resource* depth = nullptr;  // our copy
     ID3D12Resource* motion = nullptr;
     uint32_t rw = 0, rh = 0;
+    float motionScaleX = 1, motionScaleY = 1;  // stored motion vectors -> render pixels
 };
 struct PendingHud {
     bool mask = false;  // the HUD mask was recorded too
@@ -428,6 +429,7 @@ void BeforePresentFsr() {
         g_fsrByFrame.erase(found);
         const sl::Constants& c = p.constants;
         in.depth = p.depth, in.motion = p.motion, in.renderWidth = p.rw, in.renderHeight = p.rh;
+        in.motionScaleX = p.motionScaleX, in.motionScaleY = p.motionScaleY;
         in.jitterX = c.jitterOffset.x, in.jitterY = c.jitterOffset.y;
         in.reset = c.reset == sl::Boolean::eTrue;
         in.cameraNear = c.cameraNear, in.cameraFovY = c.cameraFOV;
@@ -1341,6 +1343,11 @@ bool FrameGenIsScreen(unsigned width, unsigned height) {
     return g_bbWidth && width == g_bbWidth && height == g_bbHeight;
 }
 
+bool FrameGenActive() {
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
+    return g_ready && g_set.enabled && Frames();
+}
+
 void FrameGenSetCamera(const float* view, int clipToPrevClipOffset) {
     std::lock_guard<std::recursive_mutex> lock(g_mutex);
     if (!g_ready || clipToPrevClipOffset < 0) return;
@@ -1355,7 +1362,7 @@ void FrameGenSetCamera(const float* view, int clipToPrevClipOffset) {
 }
 
 void FrameGenTag(ID3D12GraphicsCommandList* list, ID3D12Resource* depth, ID3D12Resource* motion, unsigned rw,
-                 unsigned rh, float jitterX, float jitterY, bool reset) {
+                 unsigned rh, float jitterX, float jitterY, bool reset, float motionScaleX, float motionScaleY) {
     std::lock_guard<std::recursive_mutex> lock(g_mutex);
     if (!g_ready || !g_set.enabled || !Frames()) return;
     if (!g_camera.valid) return void(++g_tagWhy["no camera"]);
@@ -1370,7 +1377,8 @@ void FrameGenTag(ID3D12GraphicsCommandList* list, ID3D12Resource* depth, ID3D12R
     ToSl(c.clipToPrevClip, cam.m[4]);
     ToSl(c.prevClipToClip, prevToCur);
     c.jitterOffset = sl::float2(jitterX, jitterY);
-    c.mvecScale = sl::float2(1.0f / rw, 1.0f / rh);  // our motion vectors are in render pixels
+    // Streamline wants the scale to UV: stored motion x motionScale = render pixels, / render size = UV.
+    c.mvecScale = sl::float2(motionScaleX / rw, motionScaleY / rh);
     c.cameraPinholeOffset = sl::float2(0, 0);
     // Camera position in UE's relative world (the world tile): RelativeWorldToClip =
     // T(tile - camera) * TranslatedWorldToClip.
@@ -1412,6 +1420,7 @@ void FrameGenTag(ID3D12GraphicsCommandList* list, ID3D12Resource* depth, ID3D12R
     PendingInputs inputs;
     inputs.constants = c;
     inputs.depth = copy, inputs.motion = motion, inputs.rw = rw, inputs.rh = rh;
+    inputs.motionScaleX = motionScaleX, inputs.motionScaleY = motionScaleY;
     if (kTagAtRecord) GiveInputs(TargetFrame(g_inputs), inputs, list);
     else g_pendingInputs[reinterpret_cast<uint64_t>(list)] = inputs;  // handed over when the list is submitted
 }
@@ -1460,7 +1469,7 @@ void RegisterFrameGen() {
     if (g_set.fsrHud < 0 || g_set.fsrHud >= fsrfg::kHudModeCount) g_set.fsrHud = fsrfg::kHudComposite;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FgTestFallback", g_testFallback);
     g_activeTech = g_set.tech;  // until the next launch
-    g_set.enabled = g_set.mode != kOff && kTsrMapped;  // needs the upscaler, which needs TSR mapped
+    g_set.enabled = g_set.mode != kOff;  // inputs come from the upscaler (fsr2dlss.cpp)
     if (g_set.enabled) Log("frame generation: %s, %s", kTechNames[g_activeTech], kModeNames[EffectiveMode(g_set.mode)]);
     reshade::register_event<reshade::addon_event::init_device>(&OnInitDevice);
     reshade::register_event<reshade::addon_event::destroy_device>(&OnDestroyDevice);
@@ -1496,7 +1505,7 @@ void DrawFrameGenSettings() {
     // 4x / Dynamic (FrameGenTech 0, FrameGenMode 1-4), FSR 2x (FrameGenTech 1, FrameGenMode 1).
     static const char* const kChoices[] = {"Off", "DLSS 2x", "DLSS 3x", "DLSS 4x", "DLSS Dynamic", "FSR 2x"};
     int choice = g_set.mode == kOff ? 0 : g_set.tech == kTechFsr ? 5 : g_set.mode;
-    ImGui::BeginDisabled(!kTsrMapped);
+    ImGui::BeginDisabled(false);
     ImGui::SetNextItemWidth(ControlWidth());
     const bool picked = ImGui::Combo("Frame generation##framegen", &choice, kChoices, 6);
     ImGui::EndDisabled();

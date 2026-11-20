@@ -308,7 +308,17 @@ struct StageState {
 struct Chain {
     int next = -1;  // index of the next FSR 2 pass (-1: none seen since the last accumulate)
     resource color = {0}, depth = {0}, motion = {0}, reactive = {0}, transparency = {0};
+    buffer_range view = {};  // UE's View uniform buffer, as bound to the UE pass before FSR 2's first
 };
+
+// UE's View uniform buffer is the root CBV at compute parameter 3 of UE's own passes, including the
+// FSR 2 plugin's velocity conversion just before FSR 2's first pass (capture 1). Its layout is UE
+// 4.25's (docs/FINDINGS.md): TranslatedWorldToView 192, ViewToClip 448 (jitter row 480),
+// ViewToClipNoAA 512, ClipToPrevClip 1952, TemporalAAJitter 2016, ViewSizeAndInvSize 2080.
+constexpr uint32_t kUeViewParam = 3;
+constexpr int kViewToClip = 448, kViewToClipNoAA = 512, kViewClipToPrevClip = 1952, kViewJitter = 2016,
+              kViewSize = 2080;
+constexpr uint32_t kViewBytes = 2112;
 
 struct __declspec(uuid("b6a2c5e4-1f3d-4e8a-9c71-2d5e8f0a3b47")) ListState {
     pipeline pipe = {0};
@@ -316,6 +326,7 @@ struct __declspec(uuid("b6a2c5e4-1f3d-4e8a-9c71-2d5e8f0a3b47")) ListState {
     uint32_t computeId = 0;
     bool cbFresh = false, spdFresh = false;  // FSR 2 / SPD constants pushed since the pipeline bind
     uint32_t cb[kCbDwords] = {};
+    buffer_range lastView = {};  // the last root CBV at compute parameter 3 (UE's passes)
     StageState compute, graphics;
     Chain chain;
 };
@@ -366,6 +377,54 @@ void OnPushDescriptors(command_list* cl, shader_stage stages, pipeline_layout la
     if (u.type == descriptor_type::constant_buffer || u.type == descriptor_type::buffer_shader_resource_view ||
         u.type == descriptor_type::buffer_unordered_access_view)
         st->roots[param] = {stages, u.type, *static_cast<const buffer_range*>(u.descriptors)};
+    if (u.type == descriptor_type::constant_buffer && param == kUeViewParam && (stages & shader_stage::compute) != 0)
+        s->lastView = *static_cast<const buffer_range*>(u.descriptors);
+}
+
+// Reads the View uniform buffer's first kViewBytes into <v>; checks it's the main view of this FSR 2
+// run: ViewSizeAndInvSize = the render size, TemporalAAJitter = ViewToClip's jitter row.
+bool ReadView(device* dev, const buffer_range& b, unsigned rw, unsigned rh, float* v) {
+    if (!b.buffer.handle) return false;
+    const resource_desc d = dev->get_resource_desc(b.buffer);
+    if (d.type != resource_type::buffer || b.offset + kViewBytes > d.buffer.size) return false;
+    void* data = nullptr;
+    if (!dev->map_buffer_region(b.buffer, b.offset, kViewBytes, map_access::read_only, &data) || !data) return false;
+    memcpy(v, data, kViewBytes);
+    dev->unmap_buffer_region(b.buffer);
+    return v[kViewSize / 4] == float(rw) && v[kViewSize / 4 + 1] == float(rh) && v[kViewJitter / 4] == v[(kViewToClip + 32) / 4] &&
+           v[kViewJitter / 4 + 1] == v[(kViewToClip + 32) / 4 + 1] && v[(kViewToClipNoAA + 20) / 4] > 0.05f;
+}
+
+// Our copy of FSR 2's motion vectors for frame generation (the plugin's texture may be reused
+// before the Present; ours stays valid). State: non-pixel shader resource.
+resource g_motionCopy = {0};
+device* g_motionDevice = nullptr;
+
+resource MotionCopy(command_list* cl, resource motion) {
+    device* dev = cl->get_device();
+    const resource_desc md = dev->get_resource_desc(motion);
+    if (g_motionCopy.handle) {
+        const resource_desc cd = dev->get_resource_desc(g_motionCopy);
+        if (cd.texture.width != md.texture.width || cd.texture.height != md.texture.height || cd.texture.format != md.texture.format) {
+            dev->destroy_resource(g_motionCopy);  // the GPU may still read it: rare (size change), as in CallistoDLSS's depth copy
+            g_motionCopy = {0};
+        }
+    }
+    if (!g_motionCopy.handle) {
+        const resource_desc d(md.texture.width, md.texture.height, 1, 1, md.texture.format, 1, memory_heap::default_,
+                              resource_usage::shader_resource | resource_usage::copy_dest);
+        if (!dev->create_resource(d, nullptr, resource_usage::shader_resource_non_pixel, &g_motionCopy)) return {0};
+        g_motionDevice = dev;
+        Log("frame generation: motion vector copy %ux%u fmt %u", md.texture.width, md.texture.height,
+            static_cast<uint32_t>(md.texture.format));
+    }
+    const resource both[2] = {motion, g_motionCopy};
+    const resource_usage from[2] = {resource_usage::shader_resource_non_pixel, resource_usage::shader_resource_non_pixel};
+    const resource_usage to[2] = {resource_usage::copy_source, resource_usage::copy_dest};
+    cl->barrier(2, both, from, to);
+    cl->copy_resource(motion, g_motionCopy);
+    cl->barrier(2, both, to, from);
+    return g_motionCopy;
 }
 
 bool Plausible(uint32_t w, uint32_t h) { return w >= 64 && h >= 64 && w <= 16384 && h <= 16384; }
@@ -552,6 +611,18 @@ bool OnAccumulate(command_list* cl, ListState& s) {
     in.motionScaleY = (g_set.flipMotionY ? -1.0f : 1.0f) * (ms ? float(rh) : 1.0f);
     in.reset = reset;
     in.preset = g_set.preset;
+    // The camera, from UE's View buffer (for FSR's depth heuristics and frame generation).
+    static float view[kViewBytes / 4];
+    const bool viewOk = ReadView(dev, c.view, rw, rh, view);
+    {
+        static int logged = 0;
+        if (viewOk != (logged > 0) && logged < 6) {
+            ++logged;
+            Log("View buffer %s (near %g, vertical FOV %.1f deg)", viewOk ? "found" : "NOT found at the FSR 2 run",
+                viewOk ? view[(kViewToClipNoAA + 56) / 4] : 0.0f,
+                viewOk ? 2 * std::atan(1 / view[(kViewToClipNoAA + 20) / 4]) * 57.2958f : 0.0f);
+        }
+    }
     auto* list = reinterpret_cast<ID3D12GraphicsCommandList*>(cl->get_native());
     bool ok;
     if (backend == kDlss) {
@@ -565,12 +636,10 @@ bool OnAccumulate(command_list* cl, ListState& s) {
         fi.renderWidth = rw, fi.renderHeight = rh, fi.outputWidth = dw, fi.outputHeight = dh;
         fi.jitterX = in.jitterX, fi.jitterY = in.jitterY;  // as the game gave FSR 2
         fi.motionScaleX = in.motionScaleX, fi.motionScaleY = in.motionScaleY;
-        // Camera: UE's default near plane (10 cm) and the FOV the game gave FSR 2 (cbFSR2 byte 108,
-        // if it reads as tan(FOV/2); else about 60 degrees). FSR uses them only in its depth heuristics.
-        fi.cameraNear = 10.0f;
-        float tanHalf;
-        memcpy(&tanHalf, cb + 27, 4);
-        fi.cameraFovY = tanHalf > 0.1f && tanHalf < 4.0f ? 2.0f * std::atan(tanHalf) : 1.05f;
+        // Camera from the View buffer (ViewToClipNoAA: near plane at [14], cot(FOV/2) at [5]); without
+        // it UE's default near plane and about 68 degrees (what the View had in capture 1).
+        fi.cameraNear = viewOk ? view[(kViewToClipNoAA + 56) / 4] : 10.0f;
+        fi.cameraFovY = viewOk ? 2.0f * std::atan(1.0f / view[(kViewToClipNoAA + 20) / 4]) : 1.18f;
         fi.sharpness = g_set.sharpness;
         fi.reset = reset;
         ok = fsr::Evaluate(list, fi, err);
@@ -587,6 +656,16 @@ bool OnAccumulate(command_list* cl, ListState& s) {
     if (g_evaluated == 0 && g_lastDlssPresent.load() == 0)
         Log("%s: first frame %ux%u -> %ux%u, jitter %.3f %.3f, frame index %u", BackendName(backend), rw, rh, dw, dh,
             in.jitterX, in.jitterY, frameIndex);
+    // Frame generation's inputs: UE's depth (framegen.cpp copies it), our copy of the motion vectors
+    // (FSR 2's UV units: x render size = pixels), the camera, the jitter as given to the upscaler.
+    if (viewOk && FrameGenActive() && FrameGenIsScreen(dw, dh)) {
+        const resource motion = MotionCopy(cl, c.motion);
+        if (motion.handle) {
+            FrameGenSetCamera(view, kViewClipToPrevClip);
+            FrameGenTag(list, in.depth, reinterpret_cast<ID3D12Resource*>(motion.handle), rw, rh, in.jitterX, in.jitterY, reset,
+                        in.motionScaleX, in.motionScaleY);
+        }
+    }
     g_error.clear();
     ++g_evaluated;
     g_lastDlssPresent = g_presents.load();
@@ -608,6 +687,7 @@ bool OnDispatch(command_list* cl, uint32_t x, uint32_t y, uint32_t) {
         c = Chain();
         c.next = 0;
         c.color = Bound(cl, s->compute, kSrvTable, kPyramidColor, nullptr);
+        c.view = s->lastView;
     }
     const int index = accumulate ? 5 : c.next;
     if (index >= 0) LogId(index, s->computeId);
@@ -680,7 +760,8 @@ void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t
     g_keyWasDown = down;
 }
 
-void OnDestroyDevice(device*) {
+void OnDestroyDevice(device* dev) {
+    if (g_motionCopy.handle && g_motionDevice == dev) dev->destroy_resource(g_motionCopy), g_motionCopy = {0};
     dlss::Shutdown();
     fsr::Shutdown();
 }

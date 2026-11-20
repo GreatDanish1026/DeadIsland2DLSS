@@ -14,7 +14,8 @@ namespace fsrfg {
 // One frame's inputs, all valid until the frame's Present.
 struct FrameInputs {
     ID3D12Resource* depth = nullptr;   // our copy of UE's depth (depth read + shader resource)
-    ID3D12Resource* motion = nullptr;  // render pixels, previous minus current (non-pixel shader resource)
+    ID3D12Resource* motion = nullptr;  // previous minus current (non-pixel shader resource)
+    float motionScaleX = 1, motionScaleY = 1;  // to render pixels
     unsigned renderWidth = 0, renderHeight = 0;
     float jitterX = 0, jitterY = 0;  // render pixels
     bool reset = false;

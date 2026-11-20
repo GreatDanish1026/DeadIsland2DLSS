@@ -222,3 +222,27 @@ User: "it looked great". Log: Auto picked DLSS; DLAA now created as NGX DLAA mod
 confirmed); switched to FSR: runtime offered FSR 3.1.6 and 2.3.4 on the RTX 5080, FSR 3.1.6 ran
 at native AA (3839x2159), Quality, Balanced, Performance, switching live; back to DLSS cleanly.
 FSR 4 (Radeon) untested.
+
+## View uniform buffer and 0.4.0 frame generation (2026-11-20, installed, untested)
+
+The View buffer is the root CBV at compute parameter 3 of UE's passes (the FSR 2 plugin's velocity
+conversion csc7e3dbe7, the pass before FSR 2's pyramid; capture 1 +3055360) and it has **UE 4.25's
+layout**: TranslatedWorldToView 192, ViewToTranslatedWorld 256, ViewToClip 448 (jitter row 480 =
+TemporalAAJitter 2016), ViewToClipNoAA 512 (0.839 / 1.4917: horizontal FOV 100, vertical 67.7
+degrees; near plane [14] = 10), ClipToPrevClip 1952, ViewRectMin 2064 = 0, ViewSizeAndInvSize 2080
+= render size. (The probe's View heuristic had looked at the wrong buffers.) cbFSR2 byte 108 (=1)
+is NOT tan(FOV/2): 0.3.0's FSR got 90 degrees; 0.4.0 takes near/FOV from the View.
+UE's depth at FSR 2 time is in state 0xe0 (depth read + both shader-resource states), as
+framegen.cpp's kDepthReadState expects.
+
+0.4.0: CallistoDLSS's framegen.cpp (DLSS-G 2x/3x/4x/Dynamic through Streamline 2.14.16, own NGX
+project id), fsrfg.cpp (FSR FG 2x), hdrswap.cpp (passes HDR10 through; only converts scRGB) built
+in. fsr2dlss.cpp keeps the last compute root CBV at parameter 3 per command list, takes it at FSR
+2's pyramid, reads 2112 bytes at the accumulate and checks it (ViewSize = render size, jitter rows
+equal, projection sane); on success with frame generation active and the output = back buffer
+size: copies FSR 2's motion vectors into our own texture (the plugin's may be reused before the
+Present) and calls FrameGenSetCamera(view, 1952) + FrameGenTag(depth, our motion, render size,
+jitter, reset, motion scale = render size: FSR 2's UV units). FrameGenTag/fsrfg got a motion scale
+(Callisto's motion was in pixels). Installs streamline\ (sl.*, nvngx_dlssg, nvngx_dlss copy) and
+amd_fidelityfx_framegeneration_dx12.dll. Frame generation choice needs a game restart (Streamline
+or FSR's swapchain is set up at launch). Pre-HUD picture (hudless) off, as in Callisto.

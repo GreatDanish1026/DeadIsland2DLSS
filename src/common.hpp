@@ -96,11 +96,14 @@ std::string FrameGenHeadline(bool* warn);
 void FrameGenSetCamera(const float* view, int clipToPrevClipOffset);
 // True if a TSR output of this size is the picture on screen (the back buffer's size).
 bool FrameGenIsScreen(unsigned width, unsigned height);
+// True if frame generation runs and wants this frame's inputs (else the upscaler skips preparing them).
+bool FrameGenActive();
 std::string FrameGenDiag();  // diagnostics for the upscaler's diag line
 // This frame's depth (UE's, state depth read + shader resource) and our motion vectors (render
 // pixels, previous minus current; state non-pixel shader resource), tagged on <list>.
 void FrameGenTag(ID3D12GraphicsCommandList* list, ID3D12Resource* depth, ID3D12Resource* motion, unsigned renderWidth,
-                 unsigned renderHeight, float jitterX, float jitterY, bool reset);
+                 unsigned renderHeight, float jitterX, float jitterY, bool reset, float motionScaleX = 1,
+                 float motionScaleY = 1);
 
 // probe.cpp (0.0.x, RD_PROBE): read-only logging of the game's FSR 2 passes, View uniform buffer
 // and console variables.

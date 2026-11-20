@@ -367,7 +367,7 @@ void Prepare(const FrameInputs& in, bool reset) {
     p.commandList = g_list;
     p.renderSize = {in.renderWidth, in.renderHeight};
     p.jitterOffset = {in.jitterX, in.jitterY};
-    p.motionVectorScale = {1, 1};  // our motion vectors are in render pixels
+    p.motionVectorScale = {in.motionScaleX, in.motionScaleY};  // to render pixels
     p.frameTimeDelta = g_frameMs;
     p.reset = reset;
     p.cameraNear = in.cameraNear;
