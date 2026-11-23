@@ -83,13 +83,15 @@ struct Settings {
     // near plane is 10 cm, so NVIDIA's default 40 is 4 m.
     float separation = 40;
     // FSR: what it compares the back buffer with to find the HUD (fsrfg::HudMode); ini FsrHudMode.
-    int fsrHud = 0;
+    // Dead Island 2: the picture before the HUD (user 2026-11-23: compass, text and subtitles smooth in
+    // motion; with the composite they updated at the rendered frame rate only).
+    int fsrHud = 1;
     // DLSS: the picture before the HUD and the HUD mask given to DLSS-G (ini FgHudless). On by default in
     // Dead Island 2, whose copy is the clean scene (CopyTextureRegion of the back buffer before the UI
     // composite); CallistoDLSS had it off (DLSS-G generated nothing with its copy).
     bool dlssHud = true;
 } g_set;
-const char* const kFsrHudNames[] = {"Composite (recommended)", "Picture before the HUD", "Off"};
+const char* const kFsrHudNames[] = {"Composite", "Picture before the HUD (recommended)", "Off"};
 
 uint32_t g_maxFrames = 1;  // DLSSGState::numFramesToGenerateMax
 bool g_dynamicSupported = false, g_capsKnown = false;
@@ -1483,7 +1485,7 @@ void RegisterFrameGen() {
     if (g_set.tech < 0 || g_set.tech >= kTechCount) g_set.tech = kTechDlss;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FsrHudMode", g_set.fsrHud);
     reshade::get_config_value(nullptr, RD_PRODUCT, "FgHudless", g_set.dlssHud);
-    if (g_set.fsrHud < 0 || g_set.fsrHud >= fsrfg::kHudModeCount) g_set.fsrHud = fsrfg::kHudComposite;
+    if (g_set.fsrHud < 0 || g_set.fsrHud >= fsrfg::kHudModeCount) g_set.fsrHud = fsrfg::kHudPreHud;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FgTestFallback", g_testFallback);
     g_activeTech = g_set.tech;  // until the next launch
     g_set.enabled = g_set.mode != kOff;  // inputs come from the upscaler (fsr2dlss.cpp)
@@ -1561,9 +1563,10 @@ void DrawFrameGenSettings() {
             Log("settings: FSR HUD protection %s", kFsrHudNames[g_set.fsrHud]);
         }
         Help("How FSR keeps the HUD and subtitles from warping (HDR only: in SDR the game draws its HUD straight "
-             "onto the screen).\n\nComposite: FSR compares the screen with a copy that differs only where the "
-             "game's HUD layer has something. Recommended.\nPicture before the HUD: the game's own copy from "
-             "before the HUD; in this game it also differs around characters, which then jitter.\nOff: the HUD "
+             "onto the screen).\n\nPicture before the HUD: FSR compares the screen with the game's own copy from "
+             "before the HUD. Recommended: the compass, text and subtitles stay sharp and move smoothly.\n"
+             "Composite: a copy that differs only where the game's HUD layer has something; the HUD stays sharp "
+             "but moving parts of it (the compass) only update at the rendered frame rate.\nOff: the HUD "
              "is generated like the rest of the picture and may wobble.\n\nSwitches right away.");
         return;
     }

@@ -282,3 +282,12 @@ picture (FgHudless off by default, Callisto's choice). 0.4.2 (installed, unteste
 protection on by default (ini FgHudless, checkbox in the overlay): kBufferTypeHUDLessColor + UI
 alpha mask. FSR FG's HUD issue still unexplained: next step is the user's description / comparing
 FSR's HUD protection modes.
+
+## 0.4.2 test and 0.4.3 (2026-11-23)
+
+User: DLSS-G HUD "looks great" with HUD protection (pre-HUD picture + UI mask). FSR FG: the game
+smooth, the HUD not: with "Composite" the HUD comes from the rendered frames only, so its moving
+parts (compass) step at the base frame rate. "Picture before the HUD" made the compass, text and
+subtitles smooth in motion (the game's pre-HUD copy is clean here, unlike Reunion's). 0.4.3: FSR
+FG HUD protection default "Picture before the HUD" (FsrHudMode 1), help text updated. Frame
+generation now confirmed for DLSS-G 2x and FSR FG 2x; 3x/4x/Dynamic untried.
