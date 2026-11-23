@@ -1296,6 +1296,20 @@ bool OnCopyResource(command_list* cl, resource src, resource dst) {
     return false;  // the game's copy goes ahead
 }
 
+// Dead Island 2 (UE 4, r.HDR.UI.CompositeMode 1) copies the back buffer, which then holds the
+// picture without the HUD, with CopyTextureRegion, not CopyResource (capture 1: back buffer ->
+// #c0a0a, then the UI layer #c083f is composited over it). A whole-texture region copy counts too.
+bool OnCopyTextureRegion(command_list* cl, resource src, uint32_t srcSub, const subresource_box* srcBox, resource dst,
+                         uint32_t dstSub, const subresource_box* dstBox, filter_mode) {
+    if (srcSub != 0 || dstSub != 0 || !g_bbWidth) return false;
+    const auto whole = [](const subresource_box* b, unsigned w, unsigned h) {
+        return !b || (b->left == 0 && b->top == 0 && b->right == w && b->bottom == h);
+    };
+    if (!whole(srcBox, g_bbWidth, g_bbHeight)) return false;
+    if (dstBox && !whole(dstBox, g_bbWidth, g_bbHeight)) return false;
+    return OnCopyResource(cl, src, dst);
+}
+
 void OnInitSwapchain(swapchain* sc, bool) {
     const resource bb = sc->get_back_buffer(0);
     if (!bb.handle) return;
@@ -1476,6 +1490,7 @@ void RegisterFrameGen() {
     reshade::register_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::register_event<reshade::addon_event::destroy_swapchain>(&OnDestroySwapchain);
     reshade::register_event<reshade::addon_event::copy_resource>(&OnCopyResource);
+    reshade::register_event<reshade::addon_event::copy_texture_region>(&OnCopyTextureRegion);
     reshade::register_event<reshade::addon_event::execute_command_list>(&OnExecute);
     reshade::register_event<reshade::addon_event::init_command_list>(&OnInitList);
     reshade::register_event<reshade::addon_event::destroy_resource>(&OnDestroyResource);
@@ -1490,6 +1505,7 @@ void UnregisterFrameGen() {
     reshade::unregister_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::unregister_event<reshade::addon_event::destroy_swapchain>(&OnDestroySwapchain);
     reshade::unregister_event<reshade::addon_event::copy_resource>(&OnCopyResource);
+    reshade::unregister_event<reshade::addon_event::copy_texture_region>(&OnCopyTextureRegion);
     reshade::unregister_event<reshade::addon_event::execute_command_list>(&OnExecute);
     reshade::unregister_event<reshade::addon_event::init_command_list>(&OnInitList);
     reshade::unregister_event<reshade::addon_event::destroy_resource>(&OnDestroyResource);

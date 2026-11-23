@@ -256,3 +256,16 @@ horizontal, 58.7 vertical: the FOV differs from capture 1, read live), first fra
 submission, 2 frames presented per game frame. Untagged presents only twice (one frame at
 15:47:21, four in a row at 15:47:54: menu/loading without FSR 2) -> paused, resumed 1 s later.
 Clean Streamline shutdown at exit. Not yet tried: 3x/4x/Dynamic, FSR FG 2x, FSR upscaling + FG.
+
+## FSR FG test (2026-11-20) and 0.4.1
+
+FSR FG 2x ran, but the HUD and subtitles jittered/smeared: no pre-HUD picture was ever found (no
+"pre-HUD picture found" in the log), so FSR interpolated the finished frame. Capture 1's end of
+frame (UE 4 HDR UI composite, r.HDR.UI.CompositeMode 1): tonemapper -> #ab3ee (rgb10a2 HDR10
+scene); a draw writes it to the back buffer (= the scene without HUD); the HUD/subtitles are drawn
+into the UI layer #c083f (3840x2160 bgra8 typeless, with depth); the game copies the back buffer
+to #c0a0a with **CopyTextureRegion**; a final draw composites #c0a0a + UI layer into the back
+buffer. framegen.cpp only watched copy_resource (Callisto's game used CopyResource). 0.4.1
+(installed, untested): whole-texture copy_texture_region of the back buffer is handled like
+copy_resource, so FSR FG gets the pre-HUD picture and the UI layer's opacity as its mask
+(FsrHudMode composite). DLSS-G still gets no pre-HUD picture (FgHudless off, as in Callisto).
