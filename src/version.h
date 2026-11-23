@@ -3,4 +3,4 @@
 
 #define RD_PRODUCT "DeadIsland2DLSS"  // add-on name, log file name, ReShade.ini section
 #define RD_GAME "Dead Island 2"
-#define RD_VERSION "0.4.1"
+#define RD_VERSION "0.4.2"

@@ -84,6 +84,10 @@ struct Settings {
     float separation = 40;
     // FSR: what it compares the back buffer with to find the HUD (fsrfg::HudMode); ini FsrHudMode.
     int fsrHud = 0;
+    // DLSS: the picture before the HUD and the HUD mask given to DLSS-G (ini FgHudless). On by default in
+    // Dead Island 2, whose copy is the clean scene (CopyTextureRegion of the back buffer before the UI
+    // composite); CallistoDLSS had it off (DLSS-G generated nothing with its copy).
+    bool dlssHud = true;
 } g_set;
 const char* const kFsrHudNames[] = {"Composite (recommended)", "Picture before the HUD", "Off"};
 
@@ -1215,14 +1219,12 @@ void GiveInputs(uint32_t frame, const PendingInputs& p, ID3D12GraphicsCommandLis
 // Callisto probe 0.0.6: DLSS-G generated nothing with a pre-HUD picture tagged (a full-screen copy
 // that may be RenoDX's, not the game's); off unless ReShade.ini [CallistoDLSS] FgHudless=1.
 bool HudlessWanted() {
-    static int wanted = -1;
-    if (wanted < 0) {
-        bool v = false;
-        reshade::get_config_value(nullptr, RD_PRODUCT, "FgHudless", v);
-        wanted = v ? 1 : 0;
-        Log("frame generation: pre-HUD picture %s (FgHudless)", wanted ? "given to DLSS-G" : "NOT given");
+    static int logged = -1;
+    if (logged != (g_set.dlssHud ? 1 : 0)) {
+        logged = g_set.dlssHud ? 1 : 0;
+        Log("frame generation: pre-HUD picture %s (FgHudless)", g_set.dlssHud ? "given to DLSS-G" : "NOT given");
     }
-    return wanted == 1;
+    return g_set.dlssHud;
 }
 
 void GiveHud(uint32_t frame, bool mask, ID3D12GraphicsCommandList* list) {
@@ -1480,6 +1482,7 @@ void RegisterFrameGen() {
     reshade::get_config_value(nullptr, RD_PRODUCT, "FrameGenTech", g_set.tech);
     if (g_set.tech < 0 || g_set.tech >= kTechCount) g_set.tech = kTechDlss;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FsrHudMode", g_set.fsrHud);
+    reshade::get_config_value(nullptr, RD_PRODUCT, "FgHudless", g_set.dlssHud);
     if (g_set.fsrHud < 0 || g_set.fsrHud >= fsrfg::kHudModeCount) g_set.fsrHud = fsrfg::kHudComposite;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FgTestFallback", g_testFallback);
     g_activeTech = g_set.tech;  // until the next launch
@@ -1564,6 +1567,13 @@ void DrawFrameGenSettings() {
              "is generated like the rest of the picture and may wobble.\n\nSwitches right away.");
         return;
     }
+
+    if (ImGui::Checkbox("HUD protection##dlss", &g_set.dlssHud)) {
+        reshade::set_config_value(nullptr, RD_PRODUCT, "FgHudless", g_set.dlssHud);
+        Log("settings: DLSS-G HUD protection %s", g_set.dlssHud ? "on" : "off");
+    }
+    Help("Gives DLSS Frame Generation the game's picture from before the HUD and the HUD's opacity, so the HUD and "
+         "subtitles aren't warped in generated frames (HDR only). Switches right away.");
 
     float sep = g_set.separation;
     ImGui::SetNextItemWidth(ControlWidth());

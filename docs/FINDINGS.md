@@ -269,3 +269,16 @@ buffer. framegen.cpp only watched copy_resource (Callisto's game used CopyResour
 (installed, untested): whole-texture copy_texture_region of the back buffer is handled like
 copy_resource, so FSR FG gets the pre-HUD picture and the UI layer's opacity as its mask
 (FsrHudMode composite). DLSS-G still gets no pre-HUD picture (FgHudless off, as in Callisto).
+
+## 0.4.1 test and 0.4.2 (2026-11-23)
+
+User: HUD/subtitle problems with both DLSS-G and FSR FG; ReShade screenshot in the exe folder. The
+screenshot can't show generated frames (ReShade captures the game's own frames, before frame
+generation); the doubled outlines in it (objective icons) are in rendered frames, likely the HUD's
+own style. Log: pre-HUD picture found (CopyTextureRegion hook works), HUD layer alpha found
+inverted (UE HDR UI layer: alpha = 1 - coverage) -> mask flipped; FSR FG used "composite (HUD
+mask)" all along, "picture before the HUD" only while paused in menus. DLSS-G never got a pre-HUD
+picture (FgHudless off by default, Callisto's choice). 0.4.2 (installed, untested): DLSS-G HUD
+protection on by default (ini FgHudless, checkbox in the overlay): kBufferTypeHUDLessColor + UI
+alpha mask. FSR FG's HUD issue still unexplained: next step is the user's description / comparing
+FSR's HUD protection modes.
