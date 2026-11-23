@@ -309,3 +309,10 @@ docs/release-notes-1.0.0.md. build.ps1 -Package: bin/release/DeadIsland2DLSS-1.0
 bytes, 19 entries, forward-slash names checked raw (add-on, nvngx_dlss 310.9.16, AMD loader 2.3.0 /
 upscaler 4.1.2 / framegeneration 4.0.2, streamline/ with sl.* 2.14.16 + nvngx_dlssg + nvngx_dlss
 copy, README, LICENSE (GreatDanish), THIRD_PARTY_NOTICES, licenses/). Installed in the game too.
+
+## 1.0.0 RELEASED (2026-11-23)
+
+User checked the 1.0.0 overlay ("looks good") and approved publishing. Private repo
+https://github.com/GreatDanish1026/DeadIsland2DLSS (master), tag v1.0.0 at a2e9fb8, release
+https://github.com/GreatDanish1026/DeadIsland2DLSS/releases/tag/v1.0.0 with DeadIsland2DLSS-1.0.0.zip
+(122,441,760 bytes, upload size verified), notes docs/release-notes-1.0.0.md.
