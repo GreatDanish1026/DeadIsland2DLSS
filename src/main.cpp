@@ -679,7 +679,14 @@ void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t
     HWND fg = GetForegroundWindow();
     DWORD pid = 0;
     GetWindowThreadProcessId(fg, &pid);
-    bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(kCaptureHotkey) & 0x8000);
+    // F10 only with ReShade.ini [DeadIsland2DLSS] CaptureHotkey=1 (the overlay's button always works).
+    static int hotkey = -1;
+    if (hotkey < 0) {
+        bool v = false;
+        reshade::get_config_value(nullptr, RD_PRODUCT, "CaptureHotkey", v);
+        hotkey = v ? 1 : 0;
+    }
+    bool down = hotkey == 1 && pid == GetCurrentProcessId() && (GetAsyncKeyState(kCaptureHotkey) & 0x8000);
     if (down && !g_keyWasDown) StartCapture();
     g_keyWasDown = down;
 }
@@ -725,10 +732,10 @@ void DrawOverlay(effect_runtime*) {
         rd::DrawUpscalerAdvanced();
         ImGui::SeparatorText("Frame capture");
         ImGui::BeginDisabled(g_capture.load() != Capture::Idle);
-        if (ImGui::Button("Capture frame (F10)")) StartCapture();
+        if (ImGui::Button("Capture frame")) StartCapture();
         ImGui::EndDisabled();
         rd::Help("Writes every command of two frames to DeadIsland2DLSS-frame-N.txt next to the game's exe, for "
-                 "finding FSR 2's passes again after a game update.");
+                 "finding FSR 2's passes again after a game update. F10 too with ReShade.ini CaptureHotkey=1.");
         ImGui::SameLine();
         ImGui::TextDisabled("%s", g_capture.load() == Capture::Recording ? "recording..." : g_status.c_str());
         ImGui::SeparatorText("Logs");

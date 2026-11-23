@@ -1,17 +1,18 @@
 ﻿# Builds bin\DeadIsland2DLSS.addon64 with MSVC (Visual Studio 2022+ with C++ tools).
 # MSVC is required: ReShade is built with it, and MinGW returns API structs differently.
 # Usage: .\build.ps1 [-Install] [-Package] [-GameBin <folder of DeadIsland-Win64-Shipping.exe>]
-#   -Install  copies the add-on (and, once the upscaler is built, nvngx_dlss.dll, AMD's FSR runtime
-#             and the Streamline runtime in a streamline folder) next to the game's exe (game closed).
-#   -Package  makes bin\release\DeadIsland2DLSS-<version>.zip (not for the probe).
+#   -Install  copies the add-on, nvngx_dlss.dll, AMD's FSR runtime and the Streamline runtime (in a
+#             streamline folder) next to the game's exe (game closed).
+#   -Package  makes bin\release\DeadIsland2DLSS-<version>.zip: the add-on and the runtimes laid out as
+#             in the game folder, README, LICENSE, THIRD_PARTY_NOTICES and the licences.
 #
-# 0.0.x is a probe: only the frame capture tool (main.cpp) and the read-only probe (probe.cpp) are
-# built, and only the add-on is installed. upscaler.cpp, dlss.cpp, fsr*.cpp, framegen.cpp and
-# hdrswap.cpp come from CallistoDLSS 1.0.x and aren't built yet ($Probe below).
+# Sources built: main.cpp (overlay, frame capture), fsr2dlss.cpp (DLSS / FSR in place of the game's
+# FSR 2), dlss.cpp, fsr.cpp, framegen.cpp (DLSS-G), fsrfg.cpp (FSR FG), hdrswap.cpp. upscaler.cpp
+# (CallistoDLSS's TAA replacement) isn't built. $Probe = $true builds the 0.0.x probe instead.
 #
 # The NVIDIA runtime comes from third_party\streamline\bin\x64: bin\x64 of NVIDIA's Streamline
 # SDK release 2.14.16 (github.com/NVIDIA-RTX/Streamline/releases), which also carries
-# nvngx_dlss.dll and nvngx_dlssd.dll (Ray Reconstruction) 310.9.16. AMD's FSR runtime
+# nvngx_dlss.dll 310.9.16. AMD's FSR runtime
 # (amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_upscaler_dx12.dll,
 # amd_fidelityfx_framegeneration_dx12.dll) comes from Kits\FidelityFX\signedbin of AMD's FSR SDK
 # 2.4.0, copied to third_party\fidelityfx\bin. Those DLLs aren't in this repository.
@@ -72,31 +73,66 @@ cmd /c $cmd
 if ($LASTEXITCODE) { throw "build failed" }
 Write-Host "Built $addon"
 
+$sl = "$root\third_party\streamline\bin\x64"
+$ffx = "$root\third_party\fidelityfx\bin"
+$slFiles = "sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "sl.reflex.dll", "sl.pcl.dll", "nvngx_dlssg.dll", "nvngx_dlss.dll"
+$ffxFiles = "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll"
+
+# Lays out the add-on and the NVIDIA and AMD runtimes as they go in the game's Win64 folder:
+# nvngx_dlss.dll and AMD's signed FSR runtime (FSR SDK 2.4.0 Kits\FidelityFX\signedbin) next to the
+# exe, NVIDIA's Streamline (DLSS Frame Generation) in Win64\streamline. Streamline starts NGX with
+# that folder as its feature path, so DLSS goes there too (CallistoDLSS 2026-11-12).
+function Copy-Runtime([string]$dest) {
+    Copy-Item $addon $dest -Force
+    if ($Probe) { return }
+    foreach ($f in $slFiles) { if (-not (Test-Path "$sl\$f")) { throw "$f not found in $sl (Streamline 2.14.16 release)" } }
+    foreach ($f in $ffxFiles) { if (-not (Test-Path "$ffx\$f")) { throw "$f not found in $ffx (FSR SDK 2.4.0 signedbin)" } }
+    Copy-Item "$sl\nvngx_dlss.dll" $dest -Force
+    foreach ($f in $ffxFiles) { Copy-Item "$ffx\$f" $dest -Force }
+    New-Item -ItemType Directory -Force "$dest\streamline" | Out-Null
+    foreach ($f in $slFiles) { Copy-Item "$sl\$f" "$dest\streamline" -Force }
+}
+
 if ($Install) {
     if (-not (Test-Path "$GameBin\$exe")) { throw "$exe not found in $GameBin (pass -GameBin)" }
     if (Get-Process ([IO.Path]::GetFileNameWithoutExtension($exe)) -ErrorAction SilentlyContinue) { throw "Close the game first." }
-    Copy-Item $addon $GameBin -Force
+    Copy-Runtime $GameBin
     if (-not $Probe) {
-        $sl = "$root\third_party\streamline\bin\x64"
-        if (-not (Test-Path "$sl\nvngx_dlss.dll")) { throw "nvngx_dlss.dll not found in $sl (Streamline 2.14.16 release)" }
-        Copy-Item "$sl\nvngx_dlss.dll" $GameBin -Force
-        # AMD's signed FSR runtime (FSR SDK 2.4.0 Kits\FidelityFX\signedbin).
-        $ffx = "$root\third_party\fidelityfx\bin"
-        foreach ($f in "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll") {
-            if (-not (Test-Path "$ffx\$f")) { throw "$f not found in $ffx (FSR SDK 2.4.0 signedbin)" }
-            Copy-Item "$ffx\$f" $GameBin -Force
-        }
-        # NVIDIA's Streamline (DLSS Frame Generation) in Win64\streamline. Streamline starts NGX with
-        # that folder as its feature path, so DLSS goes there too (CallistoDLSS 2026-11-12).
-        New-Item -ItemType Directory -Force "$GameBin\streamline" | Out-Null
-        foreach ($f in "sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "sl.reflex.dll", "sl.pcl.dll", "nvngx_dlssg.dll", "nvngx_dlss.dll") {
-            if (-not (Test-Path "$sl\$f")) { throw "$f not found in $sl (Streamline 2.14.16 release)" }
-            Copy-Item "$sl\$f" "$GameBin\streamline" -Force
-        }
         Copy-Item "$root\third_party\streamline\license.txt" "$GameBin\streamline\streamline.license.txt" -Force
         Copy-Item "$root\third_party\streamline\licenses\reflex.license.txt" "$GameBin\streamline" -Force
     }
     Write-Host "Installed $addon to $GameBin"
 }
 
-if ($Package) { throw "No package for the probe." }
+if ($Package) {
+    if ($Probe) { throw "No package for the probe." }
+    $version = [regex]::Match((Get-Content "$root\src\version.h" -Raw), 'RD_VERSION "([^"]+)"').Groups[1].Value
+    $name = "DeadIsland2DLSS-$version"
+    $stage = "$root\bin\release\$name"
+    if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+    New-Item -ItemType Directory -Force "$stage\licenses" | Out-Null
+    # Everything at the top level (and the streamline folder) goes next to the game's shipping exe.
+    Copy-Runtime $stage
+    Copy-Item "$root\README.md", "$root\LICENSE", "$root\THIRD_PARTY_NOTICES.txt" $stage
+    Copy-Item "$root\third_party\streamline\license.txt" "$stage\licenses\Streamline-LICENSE.txt"
+    Copy-Item "$root\third_party\streamline\licenses\nvngx_dlss.license.txt" "$stage\licenses\NVIDIA-DLSS-LICENSE.txt"
+    Copy-Item "$root\third_party\streamline\licenses\reflex.license.txt" "$stage\licenses\NVIDIA-Reflex-LICENSE.txt"
+    Copy-Item "$root\third_party\fidelityfx\license.md" "$stage\licenses\AMD-FSR-LICENSE.txt"
+    $zip = "$root\bin\release\$name.zip"
+    if (Test-Path $zip) { Remove-Item -Force $zip }
+    # Forward-slash entry names (Compress-Archive in PowerShell 5.1 writes backslashes, which Linux
+    # unzip tools extract as file names: streamline\x.dll; CallistoDLSS 1.0.0-1.0.4).
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        Get-ChildItem $stage -Recurse -File | ForEach-Object {
+            $entry = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $entry,
+                [IO.Compression.CompressionLevel]::Optimal)
+        }
+    } finally { $archive.Dispose() }
+    Write-Host "Packaged $zip ($((Get-Item $zip).Length) bytes)"
+    Get-ChildItem $stage -Recurse -File | ForEach-Object {
+        "{0,-45} {1,-16} {2,12:N0}" -f $_.FullName.Substring($stage.Length + 1), $_.VersionInfo.FileVersion, $_.Length
+    }
+}

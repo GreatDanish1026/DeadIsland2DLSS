@@ -131,12 +131,7 @@ void SaveSettings() {
     reshade::set_config_value(nullptr, RD_PRODUCT, "FsrSharpness", g_set.sharpness);
     reshade::set_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
     reshade::set_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "MotionUnits", g_set.motionUnits);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "FlipJitter", g_set.flipJitter);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "FlipMotionX", g_set.flipMotionX);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "FlipMotionY", g_set.flipMotionY);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "SkipFsr2Passes", g_set.skipPasses);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "ReactiveBias", g_set.reactiveBias);
+    // MotionUnits, FlipJitter, FlipMotionX/Y, SkipFsr2Passes, ReactiveBias: hidden ini keys (read only).
 }
 
 // ---------------------------------------------------------------- status
@@ -864,21 +859,9 @@ void DrawUpscalerStatus() {
     if (!g_error.empty()) ImGui::TextColored(kWarn, "Last error: %s", g_error.c_str());
 }
 
-void DrawUpscalerAdvanced() {
-    bool changed = false;
-    ImGui::SeparatorText("Testing");
-    ImGui::SetNextItemWidth(ControlWidth());
-    if (ImGui::Combo("Motion vector units", &g_set.motionUnits, kMotionUnitsNames, kMotionUnitsCount)) changed = true;
-    Help("How the game's FSR 2 motion vectors are scaled for DLSS. Wrong units smear moving things badly.");
-    if (ImGui::Checkbox("Flip motion x", &g_set.flipMotionX)) changed = true;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Flip motion y", &g_set.flipMotionY)) changed = true;
-    if (ImGui::Checkbox("Flip jitter", &g_set.flipJitter)) changed = true, g_resetNext = true;
-    Help("With the wrong jitter sign the picture shimmers and looks soft when standing still.");
-    if (ImGui::Checkbox("Skip FSR 2's own passes while DLSS runs", &g_set.skipPasses)) changed = true;
-    if (ImGui::Checkbox("Reactive mask as DLSS bias mask", &g_set.reactiveBias)) changed = true, g_resetNext = true;
-    Help("Gives DLSS the game's FSR 2 reactive mask (particles, transparency). Off by default.");
-    if (changed) SaveSettings();
-}
+// The testing switches of 0.1-0.4 (motion units, flips, jitter sign, FSR 2 pass skipping, reactive
+// mask as DLSS bias) were confirmed at their defaults and left the overlay in 1.0.0; their ini keys
+// (MotionUnits, FlipMotionX/Y, FlipJitter, SkipFsr2Passes, ReactiveBias) still work, for support.
+void DrawUpscalerAdvanced() {}
 
 }  // namespace rd

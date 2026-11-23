@@ -299,3 +299,13 @@ is supported", interpolation enabled in eDynamic mode; our state counter read 1 
 switch, as in Callisto), all switched live. Pre-HUD picture + UI mask given to DLSS-G. Only two
 4-frame gaps without inputs (menu/loading), paused and resumed about 1 s later. Frame generation is
 now confirmed in every mode except FSR 4 / FSR FG 4 (Radeon only).
+
+## 1.0.0 packaged (2026-11-23, not released)
+
+Testing switches out of the overlay (ini keys still read: MotionUnits, FlipMotionX/Y, FlipJitter,
+SkipFsr2Passes, ReactiveBias); F10 capture only with ini CaptureHotkey=1 (button always). README,
+THIRD_PARTY_NOTICES (no Ray Reconstruction DLL shipped: the game has no ray tracing), release notes
+docs/release-notes-1.0.0.md. build.ps1 -Package: bin/release/DeadIsland2DLSS-1.0.0.zip, 122,441,760
+bytes, 19 entries, forward-slash names checked raw (add-on, nvngx_dlss 310.9.16, AMD loader 2.3.0 /
+upscaler 4.1.2 / framegeneration 4.0.2, streamline/ with sl.* 2.14.16 + nvngx_dlssg + nvngx_dlss
+copy, README, LICENSE (GreatDanish), THIRD_PARTY_NOTICES, licenses/). Installed in the game too.
