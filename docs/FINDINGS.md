@@ -291,3 +291,11 @@ parts (compass) step at the base frame rate. "Picture before the HUD" made the c
 subtitles smooth in motion (the game's pre-HUD copy is clean here, unlike Reunion's). 0.4.3: FSR
 FG HUD protection default "Picture before the HUD" (FsrHudMode 1), help text updated. Frame
 generation now confirmed for DLSS-G 2x and FSR FG 2x; 3x/4x/Dynamic untried.
+
+## DLSS-G 3x / 4x / Dynamic test (2026-11-23): WORK
+
+Log: 2x -> 3x ("3 frames presented per game frame") -> 4x (4) -> Dynamic (Streamline: "Dynamic MFG
+is supported", interpolation enabled in eDynamic mode; our state counter read 1 right after the
+switch, as in Callisto), all switched live. Pre-HUD picture + UI mask given to DLSS-G. Only two
+4-frame gaps without inputs (menu/loading), paused and resumed about 1 s later. Frame generation is
+now confirmed in every mode except FSR 4 / FSR FG 4 (Radeon only).
